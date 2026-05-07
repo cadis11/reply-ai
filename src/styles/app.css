@@ -1,0 +1,16 @@
+@import 'tailwindcss';
+
+@layer base {
+  html,
+  body {
+    @apply text-gray-900 bg-white;
+  }
+
+  .using-mouse * {
+    outline: none !important;
+  }
+}
+
+.font-inter {
+  font-family: 'Inter', system-ui, sans-serif;
+}
