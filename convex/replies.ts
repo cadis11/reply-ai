@@ -1,15 +1,84 @@
 "use node";
 
-// AI PROVIDER: Google Gemini 2.0 Flash (free tier — 100 req/day, no credit card)
-// TO SWITCH TO ANTHROPIC CLAUDE LATER:
-// 1. Replace GEMINI_API_KEY with ANTHROPIC_API_KEY in Convex env
-// 2. Change fetch URL to: https://api.anthropic.com/v1/messages
-// 3. Update request body to Anthropic schema (model: claude-haiku-4-5-20251001)
-//    body: { model, max_tokens: 1024, messages: [{ role: "user", content: prompt }] }
-//    response path: data.content[0].text
+// AI PROVIDER is now controlled from the Admin Panel (/admin)
+// To switch provider: go to /admin → select provider → save
+// To add API keys: npx convex env set PROVIDER_API_KEY your_key
 
 import { action } from "./_generated/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
+
+interface ProviderConfig {
+  url: string;
+  apiKeyEnvVar: string;
+  buildHeaders: (apiKey: string) => Record<string, string>;
+  buildBody: (prompt: string) => object;
+  extractText: (data: unknown) => string;
+}
+
+const PROVIDERS: Record<string, ProviderConfig> = {
+  groq: {
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    apiKeyEnvVar: "GROQ_API_KEY",
+    buildHeaders: (apiKey) => ({
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    }),
+    buildBody: (prompt) => ({
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.85,
+      max_tokens: 1200,
+    }),
+    extractText: (data: any) => data?.choices?.[0]?.message?.content ?? "",
+  },
+
+  gemini: {
+    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+    apiKeyEnvVar: "GEMINI_API_KEY",
+    buildHeaders: (_apiKey) => ({
+      "Content-Type": "application/json",
+    }),
+    buildBody: (prompt) => ({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.85, maxOutputTokens: 1200 },
+    }),
+    extractText: (data: any) =>
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
+  },
+
+  anthropic: {
+    url: "https://api.anthropic.com/v1/messages",
+    apiKeyEnvVar: "ANTHROPIC_API_KEY",
+    buildHeaders: (apiKey) => ({
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    }),
+    buildBody: (prompt) => ({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 1200,
+      messages: [{ role: "user", content: prompt }],
+    }),
+    extractText: (data: any) => data?.content?.[0]?.text ?? "",
+  },
+
+  openai: {
+    url: "https://api.openai.com/v1/chat/completions",
+    apiKeyEnvVar: "OPENAI_API_KEY",
+    buildHeaders: (apiKey) => ({
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    }),
+    buildBody: (prompt) => ({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.85,
+      max_tokens: 1200,
+    }),
+    extractText: (data: any) => data?.choices?.[0]?.message?.content ?? "",
+  },
+};
 
 export const generateReplies = action({
   args: {
@@ -20,11 +89,21 @@ export const generateReplies = action({
     reviewSentiment: v.string(),
   },
   returns: v.array(v.string()),
-  handler: async (_ctx, args) => {
-    const apiKey = process.env.GEMINI_API_KEY;
+  handler: async (ctx, args) => {
+    // Read active provider from DB (set via admin panel)
+    const settings = await ctx.runQuery(internal.admin.getSettingsInternal);
+    const activeProvider = settings?.provider ?? "groq";
+    const provider = PROVIDERS[activeProvider];
+
+    if (!provider) {
+      throw new Error(`Unknown provider: ${activeProvider}`);
+    }
+
+    const apiKey = process.env[provider.apiKeyEnvVar];
     if (!apiKey) {
       throw new Error(
-        "GEMINI_API_KEY is not set. Run: npx convex env set GEMINI_API_KEY your_key_here"
+        `${provider.apiKeyEnvVar} is not set. ` +
+        `Run: npx convex env set ${provider.apiKeyEnvVar} your_key_here`
       );
     }
 
@@ -51,31 +130,24 @@ Make each variation meaningfully different — different opening, different stru
 Return ONLY a valid JSON array of exactly 3 strings. No markdown, no code fences, no explanation, no extra text.
 Format exactly: ["Reply one here", "Reply two here", "Reply three here"]`;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.85,
-            maxOutputTokens: 1200,
-          },
-        }),
-      }
-    );
+    const url = activeProvider === "gemini"
+      ? `${provider.url}?key=${apiKey}`
+      : provider.url;
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: provider.buildHeaders(apiKey),
+      body: JSON.stringify(provider.buildBody(prompt)),
+    });
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Gemini API error ${response.status}: ${errorText}`);
+      throw new Error(`${activeProvider} API error ${response.status}: ${errorText}`);
     }
 
     const data = await response.json();
-    const rawText: string =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const rawText = provider.extractText(data);
 
-    // Strip markdown code fences if Gemini wraps output in ```json ... ```
     const cleaned = rawText
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
@@ -87,13 +159,12 @@ Format exactly: ["Reply one here", "Reply two here", "Reply three here"]`;
     try {
       replies = JSON.parse(cleaned);
     } catch {
-      // Fallback: extract the first JSON array found anywhere in the response
       const match = cleaned.match(/\[[\s\S]*?\]/);
       if (match) {
         replies = JSON.parse(match[0]);
       } else {
         throw new Error(
-          `Could not parse Gemini response as JSON array. Raw response: ${rawText.slice(0, 200)}`
+          `Could not parse response as JSON array. Raw: ${rawText.slice(0, 200)}`
         );
       }
     }
@@ -104,12 +175,17 @@ Format exactly: ["Reply one here", "Reply two here", "Reply three here"]`;
       );
     }
 
-    // Ensure all items are non-empty strings
-    const validated = replies.map((r, i) => {
-      if (typeof r !== "string" || r.trim().length === 0) {
+    const validated = replies.map((r: unknown, i: number) => {
+      if (typeof r !== "string" || (r as string).trim().length === 0) {
         throw new Error(`Reply ${i + 1} is empty or not a string`);
       }
-      return r.trim();
+      return (r as string).trim();
+    });
+
+    // Log this request for today's count
+    await ctx.runMutation(internal.admin.logRequest, {
+      provider: activeProvider,
+      businessType: args.businessType,
     });
 
     return validated;
