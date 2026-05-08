@@ -15,7 +15,18 @@ export const Route = createRootRouteWithContext<{
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'ReplyAI — Professional Review Replies' },
+      { title: 'ReplyAI — Professional Review Replies for Small Businesses' },
+      { name: 'description', content: 'Generate 3 professional reply variations for any customer review in seconds. Tailored to your business type, tone, and the review sentiment. Free to use.' },
+      { name: 'robots', content: 'index, follow' },
+      // Open Graph
+      { property: 'og:type', content: 'website' },
+      { property: 'og:title', content: 'ReplyAI — Professional Review Replies for Small Businesses' },
+      { property: 'og:description', content: 'Generate 3 professional reply variations for any customer review in seconds. Free AI tool for small business owners.' },
+      { property: 'og:site_name', content: 'ReplyAI' },
+      // Twitter Card
+      { name: 'twitter:card', content: 'summary' },
+      { name: 'twitter:title', content: 'ReplyAI — Professional Review Replies' },
+      { name: 'twitter:description', content: 'AI-powered review replies for small businesses. 3 variations, instant results, free to use.' },
     ],
     links: [
       { rel: 'stylesheet', href: appCss },

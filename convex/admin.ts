@@ -3,6 +3,7 @@
 import { action, mutation, query, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import crypto from "crypto";
 
 const PROVIDER_MODELS: Record<string, string> = {
   groq: "llama-3.3-70b-versatile",
@@ -18,7 +19,10 @@ const PROVIDER_ENV_KEYS: Record<string, string> = {
   openai: "OPENAI_API_KEY",
 };
 
-// Get current settings — initializes with groq if no settings row exists
+// Session duration: 8 hours
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+
+// Get current settings — public, not sensitive (just provider name)
 export const getSettings = query({
   args: {},
   returns: v.object({
@@ -35,8 +39,104 @@ export const getSettings = query({
   },
 });
 
-// Update provider
-export const updateProvider = mutation({
+// Internal: validate a session token, returns true if valid
+export const validateSessionInternal = internalQuery({
+  args: { token: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("adminSessions")
+      .withIndex("by_token", (q) => q.eq("token", args.token))
+      .first();
+    if (!session) return false;
+    if (session.expiresAt < Date.now()) return false;
+    return true;
+  },
+});
+
+// Internal: create a session, returns token
+export const createSessionInternal = internalMutation({
+  args: {},
+  returns: v.string(),
+  handler: async (ctx) => {
+    // Clean up any existing expired sessions
+    const expired = await ctx.db
+      .query("adminSessions")
+      .collect();
+    for (const s of expired) {
+      if (s.expiresAt < Date.now()) {
+        await ctx.db.delete(s._id);
+      }
+    }
+    const token = crypto.randomBytes(32).toString("hex");
+    await ctx.db.insert("adminSessions", {
+      token,
+      expiresAt: Date.now() + SESSION_TTL_MS,
+    });
+    return token;
+  },
+});
+
+// Internal: delete a session by token
+export const deleteSessionInternal = internalMutation({
+  args: { token: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("adminSessions")
+      .withIndex("by_token", (q) => q.eq("token", args.token))
+      .first();
+    if (session) {
+      await ctx.db.delete(session._id);
+    }
+    return null;
+  },
+});
+
+// Login: verify password, create server-side session, return token
+export const login = action({
+  args: { password: v.string() },
+  returns: v.union(v.string(), v.null()),
+  handler: async (ctx, args) => {
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    if (!adminPassword) return null;
+    if (args.password !== adminPassword) return null;
+    const token: string = await ctx.runMutation(internal.admin.createSessionInternal, {});
+    return token;
+  },
+});
+
+// Logout: invalidate the session token
+export const logout = action({
+  args: { token: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.runMutation(internal.admin.deleteSessionInternal, { token: args.token });
+    return null;
+  },
+});
+
+// Update provider — requires valid session token
+export const updateProvider = action({
+  args: {
+    sessionToken: v.string(),
+    provider: v.union(
+      v.literal("groq"),
+      v.literal("gemini"),
+      v.literal("anthropic"),
+      v.literal("openai")
+    ),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const valid: boolean = await ctx.runQuery(internal.admin.validateSessionInternal, { token: args.sessionToken });
+    if (!valid) return false;
+    await ctx.runMutation(internal.admin.updateProviderInternal, { provider: args.provider });
+    return true;
+  },
+});
+
+export const updateProviderInternal = internalMutation({
   args: {
     provider: v.union(
       v.literal("groq"),
@@ -57,16 +157,21 @@ export const updateProvider = mutation({
   },
 });
 
-// Check which API keys are set (returns set/not set — never returns actual key values)
+// Check which API keys are set — requires valid session token
 export const getApiKeyStatus = action({
-  args: {},
-  returns: v.object({
-    groq: v.boolean(),
-    gemini: v.boolean(),
-    anthropic: v.boolean(),
-    openai: v.boolean(),
-  }),
-  handler: async (_ctx) => {
+  args: { sessionToken: v.string() },
+  returns: v.union(
+    v.object({
+      groq: v.boolean(),
+      gemini: v.boolean(),
+      anthropic: v.boolean(),
+      openai: v.boolean(),
+    }),
+    v.null()
+  ),
+  handler: async (ctx, args) => {
+    const valid: boolean = await ctx.runQuery(internal.admin.validateSessionInternal, { token: args.sessionToken });
+    if (!valid) return null;
     return {
       groq: !!process.env.GROQ_API_KEY,
       gemini: !!process.env.GEMINI_API_KEY,
@@ -76,16 +181,31 @@ export const getApiKeyStatus = action({
   },
 });
 
-// Verify admin password
-export const verifyPassword = action({
-  args: {
-    password: v.string(),
+// Get today's request count — requires valid session token
+export const getTodayCount = action({
+  args: { sessionToken: v.string() },
+  returns: v.union(v.number(), v.null()),
+  handler: async (ctx, args) => {
+    const valid: boolean = await ctx.runQuery(internal.admin.validateSessionInternal, { token: args.sessionToken });
+    if (!valid) return null;
+    const count: number = await ctx.runQuery(internal.admin.getTodayCountInternal, {});
+    return count;
   },
-  returns: v.boolean(),
-  handler: async (_ctx, args) => {
-    const adminPassword = process.env.ADMIN_PASSWORD;
-    if (!adminPassword) return false;
-    return args.password === adminPassword;
+});
+
+export const getTodayCountInternal = internalQuery({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx) => {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const logs = await ctx.db
+      .query("requestLog")
+      .withIndex("by_timestamp", (q) =>
+        q.gte("timestamp", startOfDay.getTime())
+      )
+      .collect();
+    return logs.length;
   },
 });
 
@@ -103,23 +223,6 @@ export const logRequest = internalMutation({
       timestamp: Date.now(),
     });
     return null;
-  },
-});
-
-// Get today's request count
-export const getTodayCount = query({
-  args: {},
-  returns: v.number(),
-  handler: async (ctx) => {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const logs = await ctx.db
-      .query("requestLog")
-      .withIndex("by_timestamp", (q) =>
-        q.gte("timestamp", startOfDay.getTime())
-      )
-      .collect();
-    return logs.length;
   },
 });
 

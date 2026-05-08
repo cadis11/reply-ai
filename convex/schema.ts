@@ -16,4 +16,14 @@ export default defineSchema({
     businessType: v.string(),
     timestamp: v.number(),
   }).index("by_timestamp", ["timestamp"]),
+
+  adminSessions: defineTable({
+    token: v.string(),
+    expiresAt: v.number(),
+  }).index("by_token", ["token"]),
+
+  rateLimits: defineTable({
+    clientId: v.string(),
+    timestamp: v.number(),
+  }).index("by_clientId_and_timestamp", ["clientId", "timestamp"]),
 });

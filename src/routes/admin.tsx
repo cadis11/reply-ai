@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
-import { useAction, useMutation } from 'convex/react'
+import { useAction } from 'convex/react'
 import { useSuspenseQuery } from '@tanstack/react-query'
 import { convexQuery } from '@convex-dev/react-query'
 import { api } from '../../convex/_generated/api'
@@ -10,6 +10,8 @@ export const Route = createFileRoute('/admin')({
 })
 
 type Provider = 'groq' | 'gemini' | 'anthropic' | 'openai'
+
+const SESSION_KEY = 'replyai_admin_token'
 
 const PROVIDER_INFO: Record<Provider, { label: string; tier: string; tierColor: string; docsUrl: string }> = {
   groq: {
@@ -38,21 +40,21 @@ const PROVIDER_INFO: Record<Provider, { label: string; tier: string; tierColor: 
   },
 }
 
-function LoginGate({ onSuccess }: { onSuccess: () => void }) {
+function LoginGate({ onSuccess }: { onSuccess: (token: string) => void }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const verifyPassword = useAction(api.admin.verifyPassword)
+  const login = useAction(api.admin.login)
 
   const handleLogin = async () => {
     if (!password.trim()) return
     setLoading(true)
     setError('')
     try {
-      const ok = await verifyPassword({ password })
-      if (ok) {
-        sessionStorage.setItem('replyai_admin', '1')
-        onSuccess()
+      const token = await login({ password })
+      if (token) {
+        sessionStorage.setItem(SESSION_KEY, token)
+        onSuccess(token)
       } else {
         setError('Incorrect password')
       }
@@ -101,30 +103,54 @@ function LoginGate({ onSuccess }: { onSuccess: () => void }) {
   )
 }
 
-function AdminDashboard() {
+function AdminDashboard({ sessionToken, onLogout }: { sessionToken: string; onLogout: () => void }) {
   const { data: settings } = useSuspenseQuery(convexQuery(api.admin.getSettings, {}))
-  const { data: todayCount } = useSuspenseQuery(convexQuery(api.admin.getTodayCount, {}))
   const getApiKeyStatus = useAction(api.admin.getApiKeyStatus)
-  const updateProvider = useMutation(api.admin.updateProvider)
+  const getTodayCount = useAction(api.admin.getTodayCount)
+  const updateProvider = useAction(api.admin.updateProvider)
+  const logout = useAction(api.admin.logout)
 
   const [selectedProvider, setSelectedProvider] = useState<Provider>(settings.provider as Provider)
   const [apiKeyStatus, setApiKeyStatus] = useState<Record<string, boolean>>({})
+  const [todayCount, setTodayCount] = useState<number>(0)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loadingKeys, setLoadingKeys] = useState(true)
+  const [sessionExpired, setSessionExpired] = useState(false)
+
+  const handleSessionExpired = () => {
+    sessionStorage.removeItem(SESSION_KEY)
+    setSessionExpired(true)
+    onLogout()
+  }
 
   useEffect(() => {
-    getApiKeyStatus().then((status) => {
-      setApiKeyStatus(status)
+    Promise.all([
+      getApiKeyStatus({ sessionToken }),
+      getTodayCount({ sessionToken }),
+    ]).then(([keyStatus, count]) => {
+      if (keyStatus === null || count === null) {
+        handleSessionExpired()
+        return
+      }
+      setApiKeyStatus(keyStatus)
+      setTodayCount(count)
+    }).catch(() => {
+      // network error — don't log out, just show stale data
+    }).finally(() => {
       setLoadingKeys(false)
-    }).catch(() => setLoadingKeys(false))
+    })
   }, [])
 
   const handleSave = async () => {
     setSaving(true)
     setSaved(false)
     try {
-      await updateProvider({ provider: selectedProvider })
+      const ok = await updateProvider({ sessionToken, provider: selectedProvider })
+      if (!ok) {
+        handleSessionExpired()
+        return
+      }
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } finally {
@@ -132,9 +158,22 @@ function AdminDashboard() {
     }
   }
 
-  const handleLogout = () => {
-    sessionStorage.removeItem('replyai_admin')
-    window.location.reload()
+  const handleLogout = async () => {
+    try {
+      await logout({ token: sessionToken })
+    } catch {
+      // best-effort
+    }
+    sessionStorage.removeItem(SESSION_KEY)
+    onLogout()
+  }
+
+  if (sessionExpired) {
+    return (
+      <main className="min-h-screen bg-white flex items-center justify-center px-4">
+        <p className="text-gray-500 text-sm">Session expired. Redirecting to login...</p>
+      </main>
+    )
   }
 
   const hasChanged = selectedProvider !== settings.provider
@@ -213,7 +252,7 @@ function AdminDashboard() {
                           {keySet ? 'Key set' : 'No key'}
                         </span>
                       )}
-                      
+                      <a
                         href={info.docsUrl}
                         target="_blank"
                         rel="noopener noreferrer"
@@ -262,13 +301,20 @@ function AdminDashboard() {
 }
 
 function AdminPage() {
-  const [authenticated, setAuthenticated] = useState(
-    sessionStorage.getItem('replyai_admin') === '1'
-  )
+  const storedToken = sessionStorage.getItem(SESSION_KEY)
+  const [sessionToken, setSessionToken] = useState<string | null>(storedToken)
 
-  if (!authenticated) {
-    return <LoginGate onSuccess={() => setAuthenticated(true)} />
+  const handleLogin = (token: string) => {
+    setSessionToken(token)
   }
 
-  return <AdminDashboard />
+  const handleLogout = () => {
+    setSessionToken(null)
+  }
+
+  if (!sessionToken) {
+    return <LoginGate onSuccess={handleLogin} />
+  }
+
+  return <AdminDashboard sessionToken={sessionToken} onLogout={handleLogout} />
 }

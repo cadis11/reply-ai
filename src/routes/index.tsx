@@ -1,7 +1,18 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState, useCallback } from 'react'
 import { useAction } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+
+const CLIENT_ID_KEY = 'replyai_client_id'
+
+function getOrCreateClientId(): string {
+  let id = localStorage.getItem(CLIENT_ID_KEY)
+  if (!id) {
+    id = crypto.randomUUID()
+    localStorage.setItem(CLIENT_ID_KEY, id)
+  }
+  return id
+}
 
 export const Route = createFileRoute('/')({
   component: Home,
@@ -70,7 +81,9 @@ function Home() {
 
     try {
       const sentiment = detectReviewType(reviewText)
+      const clientId = getOrCreateClientId()
       const result = await generateReplies({
+        clientId,
         businessName: businessName.trim(),
         businessType,
         tone,
@@ -187,7 +200,14 @@ function Home() {
           </div>
         )}
 
-        <p className="text-center text-gray-400 text-xs mt-12">ReplyAI - Made for small business owners</p>
+        <div className="text-center mt-12 space-y-2">
+          <p className="text-gray-400 text-xs">ReplyAI — Made for small business owners</p>
+          <div className="flex items-center justify-center gap-4 text-xs text-gray-300">
+            <Link to="/terms" className="hover:text-gray-500 transition">Terms of Service</Link>
+            <span>·</span>
+            <Link to="/privacy" className="hover:text-gray-500 transition">Privacy Policy</Link>
+          </div>
+        </div>
       </div>
     </main>
   )
