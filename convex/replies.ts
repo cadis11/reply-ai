@@ -88,6 +88,7 @@ export const generateReplies = action({
     platform: v.string(),
     reviewText: v.string(),
     reviewSentiment: v.string(),
+    situationType: v.optional(v.string()),
   },
   returns: v.array(v.string()),
   handler: async (ctx, args) => {
@@ -109,40 +110,86 @@ export const generateReplies = action({
     }
 
     const platformGuidance: Record<string, string> = {
-      Google: "This is a Google review reply. Keep it professional and public-facing. Responses on Google affect search ranking and first impressions.",
-      Facebook: "This is a Facebook post/comment reply. Replies can be slightly warmer and more conversational. Facebook audiences value community tone.",
-      Yelp: "This is a Yelp review reply. Be factual, honest, and professional. Yelp users are often price/value-sensitive.",
-      TripAdvisor: "This is a TripAdvisor review reply. Focus on the experience and hospitality. Travelers read these before booking.",
-      Trustpilot: "This is a Trustpilot review reply. Be transparent and professional. These replies are heavily indexed and read by potential buyers.",
-      Other: "This is a general review or social media reply. Use a balanced, professional tone.",
+      Google: "This is a Google reply. Professional and public-facing.",
+      Facebook: "This is a Facebook post/comment reply. Warm, community-focused.",
+      "Twitter / X": "This is a Twitter/X reply. Concise, direct, under 280 chars ideally.",
+      YouTube: "This is a YouTube comment reply. Engaging and measured.",
+      Instagram: "This is an Instagram comment. Warm and visual in tone.",
+      LinkedIn: "This is a LinkedIn reply. Professional and credible.",
+      "News / Media": "This is a response to a news article or media story. Formal, press-statement style.",
+      Other: "General reply. Balanced and professional.",
     };
-    const platformContext = platformGuidance[args.platform] ?? platformGuidance["Other"];
 
-    const prompt = `You are an ORM (Online Reputation Management) expert helping business owners craft professional responses to customer reviews and social media posts.
+    const isPolitical = [
+      'Politician / Candidate', 'Minister / MP', 'Mayor / Local Official',
+      'Public Figure', 'Media Personality', 'Activist / NGO Leader'
+    ].includes(args.businessType);
 
-Business name: ${args.businessName}
-Business type: ${args.businessType}
-Reply tone: ${args.tone}
+    const situationGuidance: Record<string, string> = {
+      'Constituent Complaint': 'A constituent is raising a complaint. Acknowledge the issue with empathy, show accountability, and outline next steps.',
+      'Opposition Attack': 'This is a political attack from opposition. Respond with facts, dignity, and without escalating — defend without attacking.',
+      'Misinformation / Rumor': 'This is misinformation or a rumor. Calmly correct the record with facts. Be firm but not aggressive.',
+      'Policy Criticism': 'This is criticism of a policy. Acknowledge the perspective, explain the rationale, and invite dialogue.',
+      'Personal Attack': 'This is a personal attack. Respond with composure and dignity. Do not descend to personal insults.',
+      'Positive Support': 'This is positive support from a follower/voter. Express genuine gratitude and reinforce shared values.',
+      'Press / Media Question': 'This is a media or press question. Respond in a professional, clear, press-statement style.',
+      'Crisis Response': 'This is a crisis situation. Respond calmly, take responsibility where appropriate, state concrete actions being taken.',
+      'General Review': 'This is a general comment or review. Respond professionally and authentically.',
+    };
+
+    const situation = args.situationType ?? 'General Review';
+    const situationContext = situationGuidance[situation] ?? situationGuidance['General Review'];
+    const platformContext = platformGuidance[args.platform] ?? platformGuidance['Other'];
+
+    const prompt = isPolitical
+      ? `You are an expert political communications advisor helping ${args.businessType} "${args.businessName}" craft responses to public comments and media.
+
 Platform: ${args.platform}
 Platform context: ${platformContext}
+Situation: ${situation}
+Situation guidance: ${situationContext}
+Reply tone: ${args.tone}
+Sentiment of the comment: ${args.reviewSentiment}
+The comment/post/article: "${args.reviewText}"
+
+Generate exactly 3 distinct reply variations. Each reply must:
+- Be written in the voice of ${args.businessType} "${args.businessName}"
+- Directly address the specific content of the comment (never generic)
+- Match the "${args.tone}" tone
+- Follow the situation guidance strictly
+- Be appropriate length for ${args.platform} (Twitter/X: under 240 chars; others: 60-130 words)
+- Sound human, authentic, and politically credible — not robotic
+- For attacks/misinformation: be firm and factual without being inflammatory
+- For complaints: show genuine empathy and accountability
+- Never use hollow phrases like "I hear your concerns" or "Thank you for your feedback"
+- Never make promises that cannot be kept
+
+Make each variation meaningfully different in structure, opening, and emphasis.
+
+Return ONLY a valid JSON array of exactly 3 strings. No markdown, no code fences, no explanation.
+Format: ["Reply one", "Reply two", "Reply three"]`
+      : `You are an ORM expert helping "${args.businessName}" (${args.businessType}) craft responses to customer reviews.
+
+Platform: ${args.platform}
+Platform context: ${platformContext}
+Reply tone: ${args.tone}
 Review sentiment: ${args.reviewSentiment}
-Customer review/post: "${args.reviewText}"
+Customer review: "${args.reviewText}"
 
-Generate exactly 3 distinct reply variations for this review. Each reply must:
-- Directly reference specific points from the customer's review (not generic)
-- Use the business name "${args.businessName}" naturally
-- Match the "${args.tone}" tone throughout
-- Be between 60-120 words
-- Feel human and authentic, not robotic or templated
-- Be appropriate for ${args.platform} (follow platform context above)
-- For negative reviews: acknowledge the issue, apologize sincerely, offer to resolve
-- For positive reviews: express genuine gratitude, reinforce what they praised
-- For neutral reviews: thank them, address any concerns, invite them back
+Generate exactly 3 distinct reply variations. Each reply must:
+- Directly reference specific points from the review
+- Use the name "${args.businessName}" naturally
+- Match the "${args.tone}" tone
+- Be 60-120 words
+- Feel human and authentic
+- For negative: acknowledge, apologize, offer resolution
+- For positive: express genuine gratitude
+- For neutral: thank and invite back
 
-Make each variation meaningfully different — different opening, different structure, different emphasis.
+Make each variation meaningfully different.
 
-Return ONLY a valid JSON array of exactly 3 strings. No markdown, no code fences, no explanation, no extra text.
-Format exactly: ["Reply one here", "Reply two here", "Reply three here"]`;
+Return ONLY a valid JSON array of exactly 3 strings. No markdown, no code fences.
+Format: ["Reply one", "Reply two", "Reply three"]`;
 
     const url = activeProvider === "gemini"
       ? `${provider.url}?key=${apiKey}`
