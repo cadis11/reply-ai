@@ -42,7 +42,7 @@ function LoginGate({ onSuccess }: { onSuccess: () => void }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const verifyPassword = useAction(api.admin.verifyPassword)
+  const verifyPassword = useAction(api.adminActions.verifyPassword)
 
   const handleLogin = async () => {
     if (!password.trim()) return
@@ -104,7 +104,7 @@ function LoginGate({ onSuccess }: { onSuccess: () => void }) {
 function AdminDashboard() {
   const { data: settings } = useSuspenseQuery(convexQuery(api.admin.getSettings, {}))
   const { data: todayCount } = useSuspenseQuery(convexQuery(api.admin.getTodayCount, {}))
-  const getApiKeyStatus = useAction(api.admin.getApiKeyStatus)
+  const getApiKeyStatus = useAction(api.adminActions.getApiKeyStatus)
   const updateProvider = useMutation(api.admin.updateProvider)
 
   const [selectedProvider, setSelectedProvider] = useState<Provider>(settings.provider as Provider)
