@@ -85,6 +85,7 @@ export const generateReplies = action({
     businessName: v.string(),
     businessType: v.string(),
     tone: v.string(),
+    platform: v.string(),
     reviewText: v.string(),
     reviewSentiment: v.string(),
   },
@@ -107,13 +108,25 @@ export const generateReplies = action({
       );
     }
 
-    const prompt = `You are an ORM (Online Reputation Management) expert helping small business owners craft professional responses to customer reviews.
+    const platformGuidance: Record<string, string> = {
+      Google: "This is a Google review reply. Keep it professional and public-facing. Responses on Google affect search ranking and first impressions.",
+      Facebook: "This is a Facebook post/comment reply. Replies can be slightly warmer and more conversational. Facebook audiences value community tone.",
+      Yelp: "This is a Yelp review reply. Be factual, honest, and professional. Yelp users are often price/value-sensitive.",
+      TripAdvisor: "This is a TripAdvisor review reply. Focus on the experience and hospitality. Travelers read these before booking.",
+      Trustpilot: "This is a Trustpilot review reply. Be transparent and professional. These replies are heavily indexed and read by potential buyers.",
+      Other: "This is a general review or social media reply. Use a balanced, professional tone.",
+    };
+    const platformContext = platformGuidance[args.platform] ?? platformGuidance["Other"];
+
+    const prompt = `You are an ORM (Online Reputation Management) expert helping business owners craft professional responses to customer reviews and social media posts.
 
 Business name: ${args.businessName}
 Business type: ${args.businessType}
 Reply tone: ${args.tone}
+Platform: ${args.platform}
+Platform context: ${platformContext}
 Review sentiment: ${args.reviewSentiment}
-Customer review: "${args.reviewText}"
+Customer review/post: "${args.reviewText}"
 
 Generate exactly 3 distinct reply variations for this review. Each reply must:
 - Directly reference specific points from the customer's review (not generic)
@@ -121,6 +134,7 @@ Generate exactly 3 distinct reply variations for this review. Each reply must:
 - Match the "${args.tone}" tone throughout
 - Be between 60-120 words
 - Feel human and authentic, not robotic or templated
+- Be appropriate for ${args.platform} (follow platform context above)
 - For negative reviews: acknowledge the issue, apologize sincerely, offer to resolve
 - For positive reviews: express genuine gratitude, reinforce what they praised
 - For neutral reviews: thank them, address any concerns, invite them back

@@ -213,7 +213,7 @@ function AdminDashboard() {
                           {keySet ? 'Key set' : 'No key'}
                         </span>
                       )}
-                      
+                      <a
                         href={info.docsUrl}
                         target="_blank"
                         rel="noopener noreferrer"
