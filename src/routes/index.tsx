@@ -141,6 +141,25 @@ function timeAgo(dateStr?: string): string {
   return `${Math.floor(h / 24)}d ago`
 }
 
+function getPostUrl(platform: Platform, text: string): string | null {
+  const encoded = encodeURIComponent(text.slice(0, 280))
+  switch (platform) {
+    case 'Twitter / X': return `https://twitter.com/intent/tweet?text=${encoded}`
+    case 'LinkedIn':    return `https://www.linkedin.com/shareArticle?mini=true&summary=${encoded}`
+    case 'Facebook':    return `https://www.facebook.com/sharer/sharer.php?quote=${encoded}`
+    default:            return null
+  }
+}
+
+function getPlatformIcon(platform: Platform): string {
+  switch (platform) {
+    case 'Twitter / X': return '𝕏'
+    case 'LinkedIn':    return 'in'
+    case 'Facebook':    return 'f'
+    default:            return '↗'
+  }
+}
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 function Home() {
@@ -453,14 +472,26 @@ function Home() {
                         <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold flex items-center justify-center">{i+1}</span>
                         Variation {i+1}
                       </span>
-                      <button
-                        onClick={() => handleCopy(reply, i)}
-                        className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${
-                          copiedIndex === i ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'
-                        }`}
-                      >
-                        {copiedIndex === i ? '✓ Copied' : 'Copy'}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleCopy(reply, i)}
+                          className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 ${
+                            copiedIndex === i ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'
+                          }`}
+                        >
+                          {copiedIndex === i ? '✓ Copied' : 'Copy'}
+                        </button>
+                        {getPostUrl(platform, reply) && (
+                          <a
+                            href={getPostUrl(platform, reply)!}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs font-semibold px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5 bg-slate-800 text-white border-slate-800 hover:bg-slate-700"
+                          >
+                            {getPlatformIcon(platform)} Post
+                          </a>
+                        )}
+                      </div>
                     </div>
                     <p className="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap">{reply}</p>
                   </div>
@@ -504,7 +535,7 @@ function Home() {
                   {isSearching ? 'Searching…' : 'Search'}
                 </button>
               </div>
-              <p className="text-xs text-gray-400 mt-2">Searches News (Mediastack), YouTube, and Reddit simultaneously</p>
+              <p className="text-xs text-gray-400 mt-2">Searches global news (GDELT) and Reddit — 100% free, no API key needed</p>
             </div>
 
             {/* Error */}
@@ -606,22 +637,44 @@ function Home() {
                             </div>
                           ) : quickReplies.length > 0 ? (
                             <div className="space-y-2">
-                              <p className="text-xs font-semibold text-gray-500 mb-2">3 reply suggestions:</p>
+                              <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs font-semibold text-gray-500">3 reply suggestions:</p>
+                                <a
+                                  href={result.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-xs font-semibold px-3 py-1 rounded-lg bg-slate-800 text-white hover:bg-slate-700 transition flex items-center gap-1.5"
+                                >
+                                  ↗ Open Original
+                                </a>
+                              </div>
                               {quickReplies.map((r, i) => (
-                                <div key={i} className="flex items-start gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
-                                  <p className="flex-1 text-xs text-gray-700 leading-relaxed">{r}</p>
-                                  <button
-                                    onClick={() => {
-                                      copyToClipboard(r)
-                                      setQuickCopied(i)
-                                      setTimeout(() => setQuickCopied(null), 2000)
-                                    }}
-                                    className={`text-xs font-semibold px-2.5 py-1 rounded-lg flex-shrink-0 border transition ${
-                                      quickCopied === i ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-                                    }`}
-                                  >
-                                    {quickCopied === i ? '✓' : 'Copy'}
-                                  </button>
+                                <div key={i} className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                  <p className="text-xs text-gray-700 leading-relaxed mb-2">{r}</p>
+                                  <div className="flex gap-2 justify-end">
+                                    <button
+                                      onClick={() => {
+                                        copyToClipboard(r)
+                                        setQuickCopied(i)
+                                        setTimeout(() => setQuickCopied(null), 2000)
+                                      }}
+                                      className={`text-xs font-semibold px-2.5 py-1 rounded-lg flex-shrink-0 border transition ${
+                                        quickCopied === i ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                                      }`}
+                                    >
+                                      {quickCopied === i ? '✓ Copied' : 'Copy'}
+                                    </button>
+                                    {result.source === 'reddit' && (
+                                      <a
+                                        href={result.url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-orange-100 text-orange-700 border border-orange-200 hover:bg-orange-200 transition"
+                                      >
+                                        🔴 Reply on Reddit
+                                      </a>
+                                    )}
+                                  </div>
                                 </div>
                               ))}
                             </div>
@@ -639,7 +692,7 @@ function Home() {
               <div className="text-center py-16">
                 <div className="text-5xl mb-4">🔍</div>
                 <p className="text-gray-500 font-medium">Search for any politician or public figure</p>
-                <p className="text-gray-400 text-sm mt-1">Results from News, YouTube, and Reddit appear here</p>
+                <p className="text-gray-400 text-sm mt-1">Results from global news (GDELT) and Reddit appear here</p>
               </div>
             )}
 
