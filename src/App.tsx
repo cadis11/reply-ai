@@ -470,17 +470,48 @@ function MonitorTab({ userId, lang }: { userId: Id<"users">; lang: Lang }) {
       {loading && <div style={{ textAlign: "center", color: "#555", padding: "40px 0", fontSize: 13 }}>{lang === "en" ? "Searching..." : "खोज्दैछ..."}</div>}
       {!loading && searched && results.length === 0 && <div style={{ textAlign: "center", color: "#444", padding: "40px 0", fontSize: 13 }}>{t.noResults}</div>}
 
-      {!loading && results.map((r, i) => (
-        <div key={i} style={{ background: "#111118", border: "1px solid #1e1e2a", borderRadius: 12, padding: 14, marginBottom: 10 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-            <div style={{ fontSize: 11, color: "#555" }}>{r.source} · {r.platform}</div>
-            <div style={{ fontSize: 11, color: sentimentColors[r.sentiment], fontWeight: 600 }}>{sentimentLabels(r.sentiment)}</div>
-          </div>
-          <div style={{ fontSize: 14, color: "#d0cdc8", lineHeight: 1.5, marginBottom: 8 }}>{r.title}</div>
-          {r.snippet && r.snippet !== r.title && <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>{r.snippet.slice(0, 150)}{r.snippet.length > 150 ? "..." : ""}</div>}
-          <a href={r.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "#e8c84a", textDecoration: "none" }}>{t.openOriginal}</a>
+      {!loading && results.length > 0 && (
+        <div style={{ fontSize: 12, color: "#555", marginBottom: 12 }}>
+          {results.length} {lang === "en" ? "results found" : "नतिजा भेटियो"} · {lang === "en" ? "sorted by newest" : "नयाँ पहिले"}
         </div>
-      ))}
+      )}
+      {!loading && results.map((r, i) => {
+        const credBadge: Record<string, { label: string; color: string }> = {
+          nepal_major: { label: "🇳🇵 Major Nepal Media", color: "#1D9E75" },
+          nepal_minor: { label: "🇳🇵 Nepal Media", color: "#4a8" },
+          international: { label: "🌐 International", color: "#378ADD" },
+          unknown: { label: "📰 Source", color: "#555" },
+        };
+        const cred = credBadge[r.credibility ?? "unknown"];
+        const timeAgo = (dateStr?: string) => {
+          if (!dateStr) return "";
+          const diff = Date.now() - new Date(dateStr).getTime();
+          const mins = Math.floor(diff / 60000);
+          if (mins < 60) return `${mins}m ago`;
+          const hrs = Math.floor(mins / 60);
+          if (hrs < 24) return `${hrs}h ago`;
+          const days = Math.floor(hrs / 24);
+          if (days < 30) return `${days}d ago`;
+          return new Date(dateStr).toLocaleDateString();
+        };
+        return (
+          <div key={i} style={{ background: "#111118", border: "1px solid #1e1e2a", borderRadius: 12, padding: 14, marginBottom: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 10, color: cred.color, background: cred.color + "18", padding: "2px 7px", borderRadius: 4, fontWeight: 600 }}>{cred.label}</span>
+                <span style={{ fontSize: 11, color: "#444" }}>{r.source}</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+                <span style={{ fontSize: 11, color: sentimentColors[r.sentiment], fontWeight: 600 }}>{sentimentLabels(r.sentiment)}</span>
+                {r.publishedAt && <span style={{ fontSize: 10, color: "#444" }}>{timeAgo(r.publishedAt)}</span>}
+              </div>
+            </div>
+            <div style={{ fontSize: 14, color: "#d0cdc8", lineHeight: 1.5, marginBottom: 8 }}>{r.title}</div>
+            {r.snippet && r.snippet !== r.title && <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>{r.snippet.slice(0, 150)}{r.snippet.length > 150 ? "..." : ""}</div>}
+            <a href={r.url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "#e8c84a", textDecoration: "none" }}>{t.openOriginal}</a>
+          </div>
+        );
+      })}
 
       {!loading && !searched && (
         <div style={{ textAlign: "center", padding: "60px 20px" }}>
@@ -622,3 +653,4 @@ function Select({ value, onChange, options }: { value: string; onChange: (v: str
     </select>
   );
 }
+
