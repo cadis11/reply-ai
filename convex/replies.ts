@@ -1,254 +1,238 @@
 "use node";
-
-// AI PROVIDER is now controlled from the Admin Panel (/admin)
-// To switch provider: go to /admin → select provider → save
-// To add API keys: npx convex env set PROVIDER_API_KEY your_key
-
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 
-interface ProviderConfig {
-  url: string;
-  apiKeyEnvVar: string;
-  buildHeaders: (apiKey: string) => Record<string, string>;
-  buildBody: (prompt: string) => object;
-  extractText: (data: unknown) => string;
-}
-
-const PROVIDERS: Record<string, ProviderConfig> = {
-  groq: {
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    apiKeyEnvVar: "GROQ_API_KEY",
-    buildHeaders: (apiKey) => ({
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    }),
-    buildBody: (prompt) => ({
-      model: "llama-3.3-70b-versatile",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.85,
-      max_tokens: 1200,
-    }),
-    extractText: (data: any) => data?.choices?.[0]?.message?.content ?? "",
-  },
-
-  gemini: {
-    url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-    apiKeyEnvVar: "GEMINI_API_KEY",
-    buildHeaders: (_apiKey) => ({
-      "Content-Type": "application/json",
-    }),
-    buildBody: (prompt) => ({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.85, maxOutputTokens: 1200 },
-    }),
-    extractText: (data: any) =>
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
-  },
-
-  anthropic: {
-    url: "https://api.anthropic.com/v1/messages",
-    apiKeyEnvVar: "ANTHROPIC_API_KEY",
-    buildHeaders: (apiKey) => ({
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    }),
-    buildBody: (prompt) => ({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 1200,
-      messages: [{ role: "user", content: prompt }],
-    }),
-    extractText: (data: any) => data?.content?.[0]?.text ?? "",
-  },
-
-  openai: {
-    url: "https://api.openai.com/v1/chat/completions",
-    apiKeyEnvVar: "OPENAI_API_KEY",
-    buildHeaders: (apiKey) => ({
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    }),
-    buildBody: (prompt) => ({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.85,
-      max_tokens: 1200,
-    }),
-    extractText: (data: any) => data?.choices?.[0]?.message?.content ?? "",
-  },
-};
-
 export const generateReplies = action({
   args: {
-    businessName: v.string(),
-    businessType: v.string(),
-    tone: v.string(),
-    platform: v.string(),
-    reviewText: v.string(),
-    reviewSentiment: v.string(),
-    situationType: v.optional(v.string()),
+    userId: v.id("users"),
+    profileName: v.string(),
+    personType: v.string(),
+    platform: v.union(
+      v.literal("facebook"),
+      v.literal("youtube"),
+      v.literal("tiktok"),
+      v.literal("twitter"),
+      v.literal("instagram"),
+      v.literal("news"),
+      v.literal("other")
+    ),
+    situationType: v.union(
+      v.literal("attack"),
+      v.literal("complaint"),
+      v.literal("misinformation"),
+      v.literal("policy_criticism"),
+      v.literal("personal_attack"),
+      v.literal("positive_support"),
+      v.literal("press_question"),
+      v.literal("crisis")
+    ),
+    tone: v.union(
+      v.literal("diplomatic"),
+      v.literal("firm"),
+      v.literal("empathetic"),
+      v.literal("crisis_control"),
+      v.literal("grateful")
+    ),
+    language: v.union(v.literal("nepali"), v.literal("english"), v.literal("both")),
+    originalComment: v.string(),
+    party: v.optional(v.string()),
+    brandVoice: v.optional(v.string()),
   },
-  returns: v.array(v.string()),
+  returns: v.object({
+    replies: v.array(v.string()),
+    success: v.boolean(),
+    error: v.optional(v.string()),
+  }),
   handler: async (ctx, args) => {
-    // Read active provider from DB (set via admin panel)
-    const settings = await ctx.runQuery(internal.admin.getSettingsInternal);
-    const activeProvider = settings?.provider ?? "groq";
-    const provider = PROVIDERS[activeProvider];
-
-    if (!provider) {
-      throw new Error(`Unknown provider: ${activeProvider}`);
+    // Check user is allowed to generate
+    const user = await ctx.runQuery(internal.users.getUserById, { userId: args.userId });
+    if (!user || !user.isActive) {
+      return { replies: [], success: false, error: "Account not active. Contact us to activate." };
     }
 
-    const apiKey = process.env[provider.apiKeyEnvVar];
-    if (!apiKey) {
-      throw new Error(
-        `${provider.apiKeyEnvVar} is not set. ` +
-        `Run: npx convex env set ${provider.apiKeyEnvVar} your_key_here`
-      );
+    const settings = await ctx.runQuery(internal.admin.getSettings);
+    const limit = user.plan === "free" ? (settings?.freeReplyLimit ?? 5) :
+                  user.plan === "starter" ? (settings?.starterMonthlyLimit ?? 30) : 99999;
+
+    if (user.plan === "free" && user.repliesUsed >= limit) {
+      return { replies: [], success: false, error: "Free limit reached. Contact us to upgrade." };
+    }
+    if (user.plan === "starter" && user.repliesThisMonth >= limit) {
+      return { replies: [], success: false, error: "Monthly limit reached. Contact us to upgrade." };
     }
 
-    const platformGuidance: Record<string, string> = {
-      Google: "This is a Google reply. Professional and public-facing.",
-      Facebook: "This is a Facebook post/comment reply. Warm, community-focused.",
-      "Twitter / X": "This is a Twitter/X reply. Concise, direct, under 280 chars ideally.",
-      YouTube: "This is a YouTube comment reply. Engaging and measured.",
-      Instagram: "This is an Instagram comment. Warm and visual in tone.",
-      LinkedIn: "This is a LinkedIn reply. Professional and credible.",
-      "News / Media": "This is a response to a news article or media story. Formal, press-statement style.",
-      Other: "General reply. Balanced and professional.",
+    const provider = settings?.aiProvider ?? "groq";
+
+    const personTypeLabels: Record<string, string> = {
+      politician: "Politician",
+      minister: "Minister/Government Official",
+      mayor: "Mayor",
+      ward_chair: "Ward Chairperson",
+      candidate: "Election Candidate",
+      activist: "Activist/Social Leader",
+      journalist: "Journalist/Media Person",
+      influencer: "Social Media Influencer",
+      ngo_leader: "NGO/Civil Society Leader",
+      public_figure: "Public Figure",
     };
 
-    const isPolitical = [
-      'Politician / Candidate', 'Minister / MP', 'Mayor / Local Official',
-      'Public Figure', 'Media Personality', 'Activist / NGO Leader'
-    ].includes(args.businessType);
-
-    const situationGuidance: Record<string, string> = {
-      'Constituent Complaint': 'A constituent is raising a complaint. Acknowledge the issue with empathy, show accountability, and outline next steps.',
-      'Opposition Attack': 'This is a political attack from opposition. Respond with facts, dignity, and without escalating — defend without attacking.',
-      'Misinformation / Rumor': 'This is misinformation or a rumor. Calmly correct the record with facts. Be firm but not aggressive.',
-      'Policy Criticism': 'This is criticism of a policy. Acknowledge the perspective, explain the rationale, and invite dialogue.',
-      'Personal Attack': 'This is a personal attack. Respond with composure and dignity. Do not descend to personal insults.',
-      'Positive Support': 'This is positive support from a follower/voter. Express genuine gratitude and reinforce shared values.',
-      'Press / Media Question': 'This is a media or press question. Respond in a professional, clear, press-statement style.',
-      'Crisis Response': 'This is a crisis situation. Respond calmly, take responsibility where appropriate, state concrete actions being taken.',
-      'General Review': 'This is a general comment or review. Respond professionally and authentically.',
+    const situationLabels: Record<string, string> = {
+      attack: "a political attack or smear",
+      complaint: "a constituent complaint about services or policies",
+      misinformation: "misinformation or a false rumor being spread",
+      policy_criticism: "criticism of a policy or decision",
+      personal_attack: "a personal attack on character or family",
+      positive_support: "positive support from a follower or voter",
+      press_question: "a press/media question requiring an official response",
+      crisis: "a crisis situation requiring immediate damage control",
     };
 
-    const situation = args.situationType ?? 'General Review';
-    const situationContext = situationGuidance[situation] ?? situationGuidance['General Review'];
-    const platformContext = platformGuidance[args.platform] ?? platformGuidance['Other'];
+    const toneLabels: Record<string, string> = {
+      diplomatic: "diplomatic and statesmanlike — measured, respectful, above the fray",
+      firm: "firm and factual — clear, direct, evidence-based, no aggression",
+      empathetic: "empathetic to constituents — warm, understanding, action-oriented",
+      crisis_control: "crisis control — calm, reassuring, accountable without over-admitting",
+      grateful: "grateful and warm — appreciating the support, connecting personally",
+    };
 
-    const prompt = isPolitical
-      ? `You are an expert political communications advisor helping ${args.businessType} "${args.businessName}" craft responses to public comments and media.
+    const langInstruction = args.language === "nepali"
+      ? "Write ALL 3 replies ONLY in Nepali (Devanagari script). Do not use any English."
+      : args.language === "english"
+      ? "Write ALL 3 replies ONLY in English."
+      : "Write Reply 1 in Nepali (Devanagari script), Reply 2 in English, Reply 3 in Nepali mixed with some English (Nepanglish style as used by urban Nepalis).";
 
-Platform: ${args.platform}
-Platform context: ${platformContext}
-Situation: ${situation}
-Situation guidance: ${situationContext}
-Reply tone: ${args.tone}
-Sentiment of the comment: ${args.reviewSentiment}
-The comment/post/article: "${args.reviewText}"
+    const partyContext = args.party ? `They represent or are affiliated with: ${args.party}.` : "";
+    const voiceContext = args.brandVoice ? `Their personal communication style note: ${args.brandVoice}` : "";
 
-Generate exactly 3 distinct reply variations. Each reply must:
-- Be written in the voice of ${args.businessType} "${args.businessName}"
-- Directly address the specific content of the comment (never generic)
-- Match the "${args.tone}" tone
-- Follow the situation guidance strictly
-- Be appropriate length for ${args.platform} (Twitter/X: under 240 chars; others: 60-130 words)
-- Sound human, authentic, and politically credible — not robotic
-- For attacks/misinformation: be firm and factual without being inflammatory
-- For complaints: show genuine empathy and accountability
-- Never use hollow phrases like "I hear your concerns" or "Thank you for your feedback"
-- Never make promises that cannot be kept
+    const prompt = `You are an expert political communications strategist specializing in Nepal's political landscape. You understand Nepali political culture, social norms, and how politicians communicate on social media in Nepal.
 
-Make each variation meaningfully different in structure, opening, and emphasis.
+CONTEXT:
+- Person: ${args.profileName}
+- Role: ${personTypeLabels[args.personType] || args.personType}
+- Platform: ${args.platform.toUpperCase()}
+- Situation: This is ${situationLabels[args.situationType] || args.situationType}
+- Desired tone: ${toneLabels[args.tone] || args.tone}
+${partyContext}
+${voiceContext}
 
-Return ONLY a valid JSON array of exactly 3 strings. No markdown, no code fences, no explanation.
-Format: ["Reply one", "Reply two", "Reply three"]`
-      : `You are an ORM expert helping "${args.businessName}" (${args.businessType}) craft responses to customer reviews.
+ORIGINAL COMMENT/ATTACK:
+"${args.originalComment}"
 
-Platform: ${args.platform}
-Platform context: ${platformContext}
-Reply tone: ${args.tone}
-Review sentiment: ${args.reviewSentiment}
-Customer review: "${args.reviewText}"
+TASK:
+Generate exactly 3 distinct reply variations. Each reply should:
+- Feel genuinely written by a real Nepali political figure, not AI
+- Be appropriate for ${args.platform} (platform-specific length and style)
+- Never be inflammatory, aggressive, or escalatory
+- Maintain dignity and professionalism
+- Address the core issue without over-explaining
+- Reflect Nepal's political and cultural context
 
-Generate exactly 3 distinct reply variations. Each reply must:
-- Directly reference specific points from the review
-- Use the name "${args.businessName}" naturally
-- Match the "${args.tone}" tone
-- Be 60-120 words
-- Feel human and authentic
-- For negative: acknowledge, apologize, offer resolution
-- For positive: express genuine gratitude
-- For neutral: thank and invite back
+${langInstruction}
 
-Make each variation meaningfully different.
-
-Return ONLY a valid JSON array of exactly 3 strings. No markdown, no code fences.
-Format: ["Reply one", "Reply two", "Reply three"]`;
-
-    const url = activeProvider === "gemini"
-      ? `${provider.url}?key=${apiKey}`
-      : provider.url;
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: provider.buildHeaders(apiKey),
-      body: JSON.stringify(provider.buildBody(prompt)),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`${activeProvider} API error ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    const rawText = provider.extractText(data);
-
-    const cleaned = rawText
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/```\s*$/i, "")
-      .trim();
-
-    let replies: string[];
+IMPORTANT: Return ONLY a JSON object in this exact format, nothing else:
+{"replies": ["reply 1 text here", "reply 2 text here", "reply 3 text here"]}`;
 
     try {
-      replies = JSON.parse(cleaned);
-    } catch {
-      const match = cleaned.match(/\[[\s\S]*?\]/);
-      if (match) {
-        replies = JSON.parse(match[0]);
+      const providerConfig = {
+        groq: {
+          url: "https://api.groq.com/openai/v1/chat/completions",
+          envKey: "GROQ_API_KEY",
+          model: "llama-3.3-70b-versatile",
+        },
+        anthropic: {
+          url: "https://api.anthropic.com/v1/messages",
+          envKey: "ANTHROPIC_API_KEY",
+          model: "claude-3-5-haiku-20241022",
+        },
+        openai: {
+          url: "https://api.openai.com/v1/chat/completions",
+          envKey: "OPENAI_API_KEY",
+          model: "gpt-4o-mini",
+        },
+        gemini: {
+          url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
+          envKey: "GEMINI_API_KEY",
+          model: "gemini-1.5-flash",
+        },
+      };
+
+      const cfg = providerConfig[provider as keyof typeof providerConfig] ?? providerConfig.groq;
+      const apiKey = process.env[cfg.envKey];
+      if (!apiKey) throw new Error(`API key not set for provider: ${provider}`);
+
+      let responseText = "";
+
+      if (provider === "anthropic") {
+        const res = await fetch(cfg.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: cfg.model,
+            max_tokens: 1500,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        });
+        const data = await res.json();
+        responseText = data.content?.[0]?.text ?? "";
+      } else if (provider === "gemini") {
+        const res = await fetch(`${cfg.url}?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+          }),
+        });
+        const data = await res.json();
+        responseText = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
       } else {
-        throw new Error(
-          `Could not parse response as JSON array. Raw: ${rawText.slice(0, 200)}`
-        );
+        // groq + openai
+        const res = await fetch(cfg.url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: cfg.model,
+            messages: [{ role: "user", content: prompt }],
+            max_tokens: 1500,
+            temperature: 0.8,
+          }),
+        });
+        const data = await res.json();
+        responseText = data.choices?.[0]?.message?.content ?? "";
       }
-    }
 
-    if (!Array.isArray(replies) || replies.length !== 3) {
-      throw new Error(
-        `Expected array of 3 replies, got: ${JSON.stringify(replies).slice(0, 200)}`
-      );
-    }
-
-    const validated = replies.map((r: unknown, i: number) => {
-      if (typeof r !== "string" || (r as string).trim().length === 0) {
-        throw new Error(`Reply ${i + 1} is empty or not a string`);
+      // Parse JSON from response
+      let replies: string[] = [];
+      try {
+        const clean = responseText.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        const parsed = JSON.parse(clean);
+        replies = parsed.replies ?? [];
+      } catch {
+        // fallback: extract via regex
+        const matches = responseText.match(/"([^"]{20,})"/g);
+        if (matches && matches.length >= 3) {
+          replies = matches.slice(0, 3).map((m: string) => m.replace(/^"|"$/g, ""));
+        }
       }
-      return (r as string).trim();
-    });
 
-    // Log this request for today's count
-    await ctx.runMutation(internal.admin.logRequest, {
-      provider: activeProvider,
-      businessType: args.businessType,
-    });
+      if (!replies || replies.length < 3) {
+        throw new Error("Failed to parse 3 replies from AI response");
+      }
 
-    return validated;
+      // Log the usage
+      await ctx.runMutation(internal.users.incrementUsage, { userId: args.userId });
+
+      return { replies, success: true };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      return { replies: [], success: false, error: message };
+    }
   },
 });

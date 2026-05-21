@@ -1,274 +1,212 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect } from 'react'
-import { useAction, useMutation } from 'convex/react'
-import { useSuspenseQuery } from '@tanstack/react-query'
-import { convexQuery } from '@convex-dev/react-query'
-import { api } from '../../convex/_generated/api'
+import { useState } from "react";
+import { useAction } from "convex/react";
+import { api } from "../convex/_generated/api";
+import type { Id } from "../convex/_generated/dataModel";
 
-export const Route = createFileRoute('/admin')({
-  component: AdminPage,
-})
+export default function AdminPage() {
+  const [password, setPassword] = useState("");
+  const [authed, setAuthed] = useState(false);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const checkPassword = useAction(api.admin.checkAdminPassword);
 
-type Provider = 'groq' | 'gemini' | 'anthropic' | 'openai'
-
-const PROVIDER_INFO: Record<Provider, { label: string; tier: string; tierColor: string; docsUrl: string }> = {
-  groq: {
-    label: 'Groq',
-    tier: 'Free — 14,400 req/day',
-    tierColor: 'text-green-600 bg-green-50',
-    docsUrl: 'https://console.groq.com',
-  },
-  gemini: {
-    label: 'Google Gemini',
-    tier: 'Free — 1,500 req/day',
-    tierColor: 'text-blue-600 bg-blue-50',
-    docsUrl: 'https://aistudio.google.com/apikey',
-  },
-  anthropic: {
-    label: 'Anthropic Claude',
-    tier: 'Paid — best quality',
-    tierColor: 'text-purple-600 bg-purple-50',
-    docsUrl: 'https://console.anthropic.com',
-  },
-  openai: {
-    label: 'OpenAI',
-    tier: 'Paid — good quality',
-    tierColor: 'text-orange-600 bg-orange-50',
-    docsUrl: 'https://platform.openai.com/api-keys',
-  },
-}
-
-function LoginGate({ onSuccess }: { onSuccess: () => void }) {
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  const verifyPassword = useAction(api.adminActions.verifyPassword)
-
-  const handleLogin = async () => {
-    if (!password.trim()) return
-    setLoading(true)
-    setError('')
-    try {
-      const ok = await verifyPassword({ password })
-      if (ok) {
-        sessionStorage.setItem('replyai_admin', '1')
-        onSuccess()
-      } else {
-        setError('Incorrect password')
-      }
-    } catch {
-      setError('Something went wrong. Try again.')
-    } finally {
-      setLoading(false)
+  const login = async () => {
+    setLoading(true);
+    setError("");
+    const ok = await checkPassword({ password });
+    if (ok) {
+      setAuthed(true);
+      sessionStorage.setItem("neporm_admin", password);
+    } else {
+      setError("गलत password");
     }
-  }
+    setLoading(false);
+  };
 
-  return (
-    <main className="min-h-screen bg-white flex flex-col items-center justify-center px-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="w-10 h-10 rounded-xl bg-gray-900 flex items-center justify-center mx-auto mb-4">
-            <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">Admin Panel</h1>
-          <p className="text-gray-500 text-sm mt-1">ReplyAI settings</p>
-        </div>
-        <div className="bg-gray-50 border border-gray-200 rounded-2xl p-6">
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Password</label>
+  if (!authed) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+        <div style={{ width: "100%", maxWidth: 360, background: "#111118", border: "1px solid #1e1e2a", borderRadius: 16, padding: 24 }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#e8c84a", marginBottom: 4 }}>नेपओRM Admin</div>
+          <div style={{ fontSize: 12, color: "#555", marginBottom: 20 }}>Admin Password</div>
           <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-            placeholder="Enter admin password"
-            className="w-full px-4 py-3 rounded-xl border border-gray-300 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent transition mb-4"
+            type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && login()}
+            placeholder="Password"
+            style={{ width: "100%", background: "#0a0a0f", border: "1px solid #1e1e2a", borderRadius: 8, color: "#f0ede8", padding: "10px 12px", fontSize: 14, boxSizing: "border-box", marginBottom: 12 }}
           />
-          {error && (
-            <p className="text-red-600 text-sm mb-3">{error}</p>
-          )}
-          <button
-            onClick={handleLogin}
-            disabled={!password.trim() || loading}
-            className="w-full py-3 rounded-xl bg-gray-900 text-white font-semibold hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+          {error && <div style={{ color: "#e85a4a", fontSize: 12, marginBottom: 8 }}>{error}</div>}
+          <button onClick={login} disabled={loading}
+            style={{ width: "100%", padding: "12px", background: "#e8c84a", color: "#0a0a0f", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: "pointer" }}
           >
-            {loading ? 'Checking...' : 'Enter'}
+            {loading ? "..." : "Login →"}
           </button>
         </div>
       </div>
-    </main>
-  )
+    );
+  }
+
+  return <AdminDashboard password={password} />;
 }
 
-function AdminDashboard() {
-  const { data: settings } = useSuspenseQuery(convexQuery(api.admin.getSettings, {}))
-  const { data: todayCount } = useSuspenseQuery(convexQuery(api.admin.getTodayCount, {}))
-  const getApiKeyStatus = useAction(api.adminActions.getApiKeyStatus)
-  const updateProvider = useMutation(api.admin.updateProvider)
+function AdminDashboard({ password }: { password: string }) {
+  const [tab, setTab] = useState<"stats" | "users" | "contacts">("stats");
+  const [stats, setStats] = useState<any>(null);
+  const [users, setUsers] = useState<any[]>([]);
+  const [contacts, setContacts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  const [selectedProvider, setSelectedProvider] = useState<Provider>(settings.provider as Provider)
-  const [apiKeyStatus, setApiKeyStatus] = useState<Record<string, boolean>>({})
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [loadingKeys, setLoadingKeys] = useState(true)
+  const getDashboard = useAction(api.admin.getDashboardStats);
+  const listUsers = useAction(api.admin.listUsers);
+  const listContacts = useAction(api.admin.listContactRequests);
+  const activateUser = useAction(api.admin.activateUser);
 
-  useEffect(() => {
-    getApiKeyStatus().then((status) => {
-      setApiKeyStatus(status)
-      setLoadingKeys(false)
-    }).catch(() => setLoadingKeys(false))
-  }, [])
+  const loadStats = async () => {
+    setLoading(true);
+    const res = await getDashboard({ adminPassword: password });
+    if ("error" in res) return;
+    setStats(res);
+    setLoading(false);
+  };
 
-  const handleSave = async () => {
-    setSaving(true)
-    setSaved(false)
-    try {
-      await updateProvider({ provider: selectedProvider })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 3000)
-    } finally {
-      setSaving(false)
-    }
-  }
+  const loadUsers = async () => {
+    setLoading(true);
+    const res = await listUsers({ adminPassword: password });
+    if (!Array.isArray(res)) return;
+    setUsers(res);
+    setLoading(false);
+  };
 
-  const handleLogout = () => {
-    sessionStorage.removeItem('replyai_admin')
-    window.location.reload()
-  }
+  const loadContacts = async () => {
+    setLoading(true);
+    const res = await listContacts({ adminPassword: password });
+    if (!Array.isArray(res)) return;
+    setContacts(res);
+    setLoading(false);
+  };
 
-  const hasChanged = selectedProvider !== settings.provider
+  const handleTabChange = (t: "stats" | "users" | "contacts") => {
+    setTab(t);
+    if (t === "stats" && !stats) loadStats();
+    if (t === "users") loadUsers();
+    if (t === "contacts") loadContacts();
+  };
+
+  const handleActivate = async (userId: Id<"users">, plan: string) => {
+    await activateUser({ adminPassword: password, userId, plan: plan as any, note: "Manually activated" });
+    loadUsers();
+  };
+
+  const planColor: Record<string, string> = { free: "#555", starter: "#4a8", pro: "#e8c84a", agency: "#a78bfa" };
 
   return (
-    <main className="min-h-screen bg-gray-50 px-4 py-10">
-      <div className="w-full max-w-xl mx-auto">
+    <div style={{ minHeight: "100vh", background: "#0a0a0f", color: "#f0ede8" }}>
+      <header style={{ padding: "16px 20px", borderBottom: "1px solid #1e1e2a", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: "#e8c84a" }}>नेपओRM Admin</div>
+        <div style={{ fontSize: 11, color: "#555" }}>Admin Panel</div>
+      </header>
 
-        <div className="flex items-center justify-between mb-8">
+      <div style={{ display: "flex", borderBottom: "1px solid #1e1e2a" }}>
+        {(["stats", "users", "contacts"] as const).map((t) => (
+          <button key={t} onClick={() => handleTabChange(t)}
+            style={{ flex: 1, padding: "12px", background: "none", border: "none", borderBottom: tab === t ? "2px solid #e8c84a" : "2px solid transparent", color: tab === t ? "#e8c84a" : "#555", fontSize: 13, cursor: "pointer" }}
+          >
+            {t === "stats" ? "📊 Stats" : t === "users" ? "👥 Users" : "📞 Contacts"}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ maxWidth: 800, margin: "0 auto", padding: 20 }}>
+        {tab === "stats" && (
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Admin Panel</h1>
-            <p className="text-gray-500 text-sm mt-0.5">ReplyAI settings</p>
+            {!stats && (
+              <button onClick={loadStats} style={{ padding: "12px 24px", background: "#e8c84a", color: "#0a0a0f", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
+                Load Stats
+              </button>
+            )}
+            {stats && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
+                {[
+                  { label: "Total Users", value: stats.totalUsers },
+                  { label: "Active Users", value: stats.activeUsers },
+                  { label: "Pro/Agency", value: stats.proUsers },
+                  { label: "Total Replies", value: stats.totalReplies },
+                  { label: "Today's Replies", value: stats.todayReplies },
+                  { label: "New Contacts", value: stats.newContacts, highlight: true },
+                ].map((s, i) => (
+                  <div key={i} style={{ background: s.highlight ? "#0d0d08" : "#111118", border: `1px solid ${s.highlight ? "#e8c84a33" : "#1e1e2a"}`, borderRadius: 12, padding: 16, textAlign: "center" }}>
+                    <div style={{ fontSize: 26, fontWeight: 700, color: s.highlight ? "#e8c84a" : "#f0ede8" }}>{s.value}</div>
+                    <div style={{ fontSize: 11, color: "#555", marginTop: 4 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {stats && (
+              <div style={{ marginTop: 16, background: "#111118", borderRadius: 10, padding: 14 }}>
+                <span style={{ fontSize: 12, color: "#555" }}>AI Provider: </span>
+                <span style={{ fontSize: 12, color: "#e8c84a", fontWeight: 600 }}>{stats.aiProvider.toUpperCase()}</span>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-3">
-            <a href="/" className="text-sm text-gray-500 hover:text-gray-700 transition">← Back to app</a>
-            <button onClick={handleLogout} className="text-sm text-red-500 hover:text-red-700 transition">Logout</button>
-          </div>
-        </div>
+        )}
 
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">Requests Today</p>
-            <p className="text-3xl font-bold text-gray-900">{todayCount}</p>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-1">Active Model</p>
-            <p className="text-sm font-semibold text-gray-900 mt-1">{settings.model}</p>
-            <p className="text-xs text-gray-400 mt-0.5">{PROVIDER_INFO[settings.provider as Provider]?.label}</p>
-          </div>
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-2xl p-6 mb-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">AI Provider</h2>
-          <div className="space-y-3">
-            {(Object.keys(PROVIDER_INFO) as Provider[]).map((p) => {
-              const info = PROVIDER_INFO[p]
-              const isSelected = selectedProvider === p
-              const isActive = settings.provider === p
-              const keySet = apiKeyStatus[p]
-
-              return (
-                <button
-                  key={p}
-                  onClick={() => setSelectedProvider(p)}
-                  className={`w-full text-left px-4 py-3.5 rounded-xl border transition ${
-                    isSelected
-                      ? 'border-gray-900 bg-gray-50'
-                      : 'border-gray-200 bg-white hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                        isSelected ? 'border-gray-900' : 'border-gray-300'
-                      }`}>
-                        {isSelected && <div className="w-2 h-2 rounded-full bg-gray-900" />}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-gray-900">{info.label}</span>
-                          {isActive && (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Active</span>
-                          )}
-                        </div>
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${info.tierColor}`}>
-                          {info.tier}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {loadingKeys ? (
-                        <span className="text-xs text-gray-400">checking...</span>
-                      ) : (
-                        <span className={`text-xs font-medium flex items-center gap-1 ${keySet ? 'text-green-600' : 'text-red-400'}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${keySet ? 'bg-green-500' : 'bg-red-400'}`} />
-                          {keySet ? 'Key set' : 'No key'}
-                        </span>
-                      )}
-                      <a
-                        href={info.docsUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-xs text-gray-400 hover:text-gray-600 underline"
-                      >
-                        Get key
-                      </a>
+        {tab === "users" && (
+          <div>
+            {loading && <div style={{ color: "#555", fontSize: 13, padding: 20 }}>Loading...</div>}
+            {users.map((u) => (
+              <div key={u._id} style={{ background: "#111118", border: "1px solid #1e1e2a", borderRadius: 12, padding: 14, marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "#f0ede8" }}>{u.name}</div>
+                    <div style={{ fontSize: 12, color: "#555" }}>{u.email} · {u.phone ?? "no phone"}</div>
+                    <div style={{ fontSize: 12, color: "#444", marginTop: 2 }}>
+                      {u.repliesUsed} replies · Joined {new Date(u.createdAt).toLocaleDateString()}
                     </div>
                   </div>
-                </button>
-              )
-            })}
-          </div>
-
-          <button
-            onClick={handleSave}
-            disabled={!hasChanged || saving || !apiKeyStatus[selectedProvider]}
-            className={`w-full mt-5 py-3 rounded-xl font-semibold text-sm transition ${
-              saved
-                ? 'bg-green-500 text-white'
-                : hasChanged && apiKeyStatus[selectedProvider]
-                  ? 'bg-gray-900 text-white hover:bg-gray-700'
-                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-            }`}
-          >
-            {saving ? 'Saving...' : saved ? '✓ Saved' : !apiKeyStatus[selectedProvider] ? 'Set API key first' : hasChanged ? `Switch to ${PROVIDER_INFO[selectedProvider].label}` : 'No changes'}
-          </button>
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">How to set API keys</h2>
-          <p className="text-xs text-gray-500 mb-3">Run in your Convex terminal:</p>
-          <div className="space-y-2">
-            {(Object.keys(PROVIDER_INFO) as Provider[]).map((p) => (
-              <div key={p} className="bg-gray-50 rounded-lg px-3 py-2 font-mono text-xs text-gray-600">
-                npx convex env set {p === 'groq' ? 'GROQ_API_KEY' : p === 'gemini' ? 'GEMINI_API_KEY' : p === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'} your_key_here
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 12, color: planColor[u.plan] ?? "#555", fontWeight: 600 }}>{u.plan.toUpperCase()}</div>
+                    <div style={{ fontSize: 11, color: u.isActive ? "#4a8" : "#e85a4a" }}>
+                      {u.isActive ? "● Active" : "● Inactive"}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                  {(["starter", "pro", "agency"] as const).map((plan) => (
+                    <button key={plan} onClick={() => handleActivate(u._id, plan)}
+                      style={{ padding: "5px 10px", background: "#1a1a1a", border: "1px solid #2a2a3a", borderRadius: 6, color: planColor[plan], fontSize: 11, cursor: "pointer" }}
+                    >
+                      → {plan}
+                    </button>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
-        </div>
+        )}
 
+        {tab === "contacts" && (
+          <div>
+            {loading && <div style={{ color: "#555", fontSize: 13, padding: 20 }}>Loading...</div>}
+            {contacts.map((c) => (
+              <div key={c._id} style={{ background: "#111118", border: `1px solid ${c.status === "new" ? "#e8c84a33" : "#1e1e2a"}`, borderRadius: 12, padding: 14, marginBottom: 10 }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "#f0ede8" }}>{c.name}</div>
+                    <div style={{ fontSize: 12, color: "#555" }}>📞 {c.phone}</div>
+                    {c.email && <div style={{ fontSize: 12, color: "#555" }}>✉️ {c.email}</div>}
+                    <div style={{ fontSize: 12, color: "#e8c84a", marginTop: 4 }}>Plan: {c.planInterested}</div>
+                    {c.message && <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>{c.message}</div>}
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 11, color: c.status === "new" ? "#e8c84a" : "#555" }}>{c.status.toUpperCase()}</div>
+                    <div style={{ fontSize: 11, color: "#444" }}>{new Date(c.createdAt).toLocaleDateString()}</div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-    </main>
-  )
-}
-
-function AdminPage() {
-  const [authenticated, setAuthenticated] = useState(
-    sessionStorage.getItem('replyai_admin') === '1'
-  )
-
-  if (!authenticated) {
-    return <LoginGate onSuccess={() => setAuthenticated(true)} />
-  }
-
-  return <AdminDashboard />
+    </div>
+  );
 }

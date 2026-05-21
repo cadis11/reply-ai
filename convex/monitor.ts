@@ -1,131 +1,142 @@
 "use node";
-
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 
-function detectSentiment(text: string): "positive" | "negative" | "neutral" {
-  const lower = text.toLowerCase();
-  const pos = ["support", "win", "success", "good", "best", "amazing", "proud", "victory", "achieve", "praised", "commend", "approve", "excellent", "congratul", "strong", "great"];
-  const neg = ["scandal", "corrupt", "fail", "resign", "arrest", "attack", "accuse", "fraud", "incompetent", "lie", "wrong", "crisis", "bad", "terrible", "protest", "anger", "condemn", "controversial", "impeach", "bribery", "abuse", "criticism"];
-  let p = 0, n = 0;
-  for (const w of pos) { if (lower.includes(w)) p++; }
-  for (const w of neg) { if (lower.includes(w)) n++; }
-  if (p > n) return "positive";
-  if (n > p) return "negative";
-  return "neutral";
-}
-
-function classifySource(url: string): "news" | "youtube" | "reddit" | "web" {
-  if (url.includes("youtube.com") || url.includes("youtu.be")) return "youtube";
-  if (url.includes("reddit.com")) return "reddit";
-  const newsDomains = ["bbc.", "cnn.", "reuters.", "apnews.", "theguardian.", "nytimes.", "aljazeera.", "ndtv.", "timesofindia.", "kathmandupost.", "myrepublica.", "ekantipur.", "onlinekhabar.", "setopati.", "ratopati.", "hindustantimes.", "thehindu.", "dawn.com", "thedailystar.", "straitstimes.", "abc.net", "france24.", "dw.com", "voanews."];
-  for (const d of newsDomains) { if (url.includes(d)) return "news"; }
-  return "web";
-}
-
-// GDELT — completely free, no API key, no signup
-async function searchGDELT(query: string) {
-  try {
-    const encoded = encodeURIComponent(`"${query}"`);
-    const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encoded}&mode=ArtList&maxrecords=15&format=json&timespan=1month`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": "ReplyAI/2.0" },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as any;
-    const articles = data?.articles ?? [];
-    return articles.map((a: any, i: number) => ({
-      id: `gdelt-${i}-${Date.now()}`,
-      source: classifySource(a.url ?? "") as "news" | "youtube" | "reddit" | "web",
-      title: (a.title ?? "Untitled").slice(0, 200),
-      snippet: (a.seendescription ?? a.title ?? "").slice(0, 300),
-      url: a.url ?? "#",
-      publishedAt: a.seendate ? (() => {
-        try {
-          const d = a.seendate.toString();
-          return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}T${d.slice(9,11)}:${d.slice(11,13)}:${d.slice(13,15)}Z`;
-        } catch { return undefined; }
-      })() : undefined,
-      sentiment: detectSentiment((a.title ?? "") + " " + (a.seendescription ?? "")) as "positive" | "negative" | "neutral",
-    }));
-  } catch { return []; }
-}
-
-// Reddit — completely free, no API key, no signup
-async function searchReddit(query: string) {
-  try {
-    const encoded = encodeURIComponent(query);
-    const url = `https://www.reddit.com/search.json?q=${encoded}&sort=new&limit=10&type=link`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": "ReplyAI/2.0 (reputation monitoring)" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as any;
-    const posts = data?.data?.children ?? [];
-    return posts.map((post: any) => {
-      const p = post.data;
-      const text = (p.title ?? "") + " " + (p.selftext ?? "");
-      return {
-        id: `reddit-${p.id ?? Math.random()}`,
-        source: "reddit" as const,
-        title: (p.title ?? "Untitled").slice(0, 200),
-        snippet: p.selftext
-          ? p.selftext.slice(0, 200) + (p.selftext.length > 200 ? "..." : "")
-          : `r/${p.subreddit ?? "reddit"} · ${p.score ?? 0} upvotes`,
-        url: `https://www.reddit.com${p.permalink ?? ""}`,
-        publishedAt: p.created_utc
-          ? new Date(p.created_utc * 1000).toISOString()
-          : undefined,
-        sentiment: detectSentiment(text) as "positive" | "negative" | "neutral",
-      };
-    });
-  } catch { return []; }
-}
+const resultShape = v.object({
+  title: v.string(),
+  source: v.string(),
+  url: v.string(),
+  snippet: v.string(),
+  sentiment: v.union(v.literal("positive"), v.literal("negative"), v.literal("neutral")),
+  platform: v.string(),
+  publishedAt: v.optional(v.string()),
+});
 
 export const searchMentions = action({
-  args: { query: v.string() },
-  returns: v.array(
-    v.object({
-      id: v.string(),
-      source: v.union(v.literal("news"), v.literal("youtube"), v.literal("reddit"), v.literal("web")),
-      title: v.string(),
-      snippet: v.string(),
-      url: v.string(),
-      publishedAt: v.optional(v.string()),
-      sentiment: v.optional(v.union(v.literal("positive"), v.literal("negative"), v.literal("neutral"))),
-    })
-  ),
+  args: {
+    query: v.string(),
+    userId: v.id("users"),
+  },
+  returns: v.object({
+    results: v.array(resultShape),
+    success: v.boolean(),
+    error: v.optional(v.string()),
+  }),
   handler: async (_ctx, args) => {
-    const query = args.query.trim();
-    if (!query) return [];
+    const results: Array<{
+      title: string;
+      source: string;
+      url: string;
+      snippet: string;
+      sentiment: "positive" | "negative" | "neutral";
+      platform: string;
+      publishedAt?: string;
+    }> = [];
 
-    // Run both in parallel — both 100% free, no keys
-    const [gdeltResults, redditResults] = await Promise.all([
-      searchGDELT(query),
-      searchReddit(query),
-    ]);
+    const q = encodeURIComponent(args.query);
 
-    // Merge and deduplicate by title
-    const seen = new Set<string>();
-    const merged = [];
-    for (const r of [...gdeltResults, ...redditResults]) {
-      const key = r.title.toLowerCase().slice(0, 50);
-      if (!seen.has(key)) {
-        seen.add(key);
-        merged.push(r);
+    try {
+      // ── GDELT news search ──────────────────────────────────────────────────
+      const gdeltUrl = `https://api.gdeltproject.org/api/v2/doc/doc?query=${q}%20sourcecountry:NP&mode=artlist&maxrecords=15&format=json&sort=DateDesc`;
+      const gdeltRes = await fetch(gdeltUrl);
+
+      if (gdeltRes.ok) {
+        const gdeltData = await gdeltRes.json();
+        const articles = gdeltData.articles ?? [];
+        for (const art of articles.slice(0, 10)) {
+          const snippet: string = art.title ?? "";
+          const sentiment = detectSentiment(snippet + " " + (art.seendate ?? ""));
+          results.push({
+            title: art.title ?? "No title",
+            source: art.domain ?? "News",
+            url: art.url ?? "",
+            snippet: art.title ?? "",
+            sentiment,
+            platform: "news",
+            publishedAt: art.seendate ?? undefined,
+          });
+        }
       }
+    } catch {
+      // GDELT failed — continue
     }
 
-    // Sort newest first
-    merged.sort((a, b) => {
-      if (!a.publishedAt && !b.publishedAt) return 0;
-      if (!a.publishedAt) return 1;
-      if (!b.publishedAt) return -1;
-      return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
+    try {
+      // ── Reddit search ──────────────────────────────────────────────────────
+      const redditUrl = `https://www.reddit.com/search.json?q=${q}+nepal&sort=new&limit=10&type=link`;
+      const redditRes = await fetch(redditUrl, {
+        headers: { "User-Agent": "NepORM/1.0 monitoring tool" },
+      });
+
+      if (redditRes.ok) {
+        const redditData = await redditRes.json();
+        const posts = redditData.data?.children ?? [];
+        for (const post of posts.slice(0, 8)) {
+          const d = post.data;
+          const text = `${d.title} ${d.selftext ?? ""}`;
+          const sentiment = detectSentiment(text);
+          results.push({
+            title: d.title,
+            source: `r/${d.subreddit}`,
+            url: `https://reddit.com${d.permalink}`,
+            snippet: d.selftext ? d.selftext.slice(0, 200) : d.title,
+            sentiment,
+            platform: "reddit",
+            publishedAt: d.created_utc
+              ? new Date(d.created_utc * 1000).toISOString()
+              : undefined,
+          });
+        }
+      }
+    } catch {
+      // Reddit failed — continue
+    }
+
+    // Sort: negative first (most urgent for ORM), then by recency
+    results.sort((a, b) => {
+      const sentOrder = { negative: 0, neutral: 1, positive: 2 };
+      return sentOrder[a.sentiment] - sentOrder[b.sentiment];
     });
 
-    return merged.slice(0, 20);
+    return {
+      results: results.slice(0, 20),
+      success: true,
+    };
   },
 });
+
+function detectSentiment(text: string): "positive" | "negative" | "neutral" {
+  const t = text.toLowerCase();
+
+  const negativeWords = [
+    "corrupt", "corruption", "scam", "fraud", "resign", "arrested", "attack",
+    "fail", "failure", "bad", "wrong", "scandal", "controversy", "lie", "fake",
+    "cheat", "bribe", "bribery", "crime", "criminal", "accused", "accused",
+    "protest", "opposition", "criticism", "bhrastachar", "nirdosh", "jhuto",
+    "dismiss", "fired", "removed", "sacked", "defeated", "lost", "losing",
+    "abuse", "abused", "murder", "death", "crisis", "danger", "problem",
+    "birodh", "dosh", "kasur", "galti",
+  ];
+
+  const positiveWords = [
+    "good", "great", "excellent", "success", "winner", "won", "best",
+    "congratulations", "support", "achievement", "development", "progress",
+    "positive", "helped", "help", "praise", "praised", "thank", "thanks",
+    "respected", "honest", "clean", "transparent", "ramro", "sajilo", "sahi",
+    "badhai", "safal", "unnati", "vikas",
+  ];
+
+  let negScore = 0;
+  let posScore = 0;
+
+  for (const w of negativeWords) {
+    if (t.includes(w)) negScore++;
+  }
+  for (const w of positiveWords) {
+    if (t.includes(w)) posScore++;
+  }
+
+  if (negScore > posScore) return "negative";
+  if (posScore > negScore) return "positive";
+  return "neutral";
+}
