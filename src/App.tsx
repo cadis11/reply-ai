@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { useConvexAuth } from "convex/react";
 import { useNavigate } from "@tanstack/react-router";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
