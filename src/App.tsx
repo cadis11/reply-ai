@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
+import { useAuthActions, useConvexAuth } from "@convex-dev/auth/react";
+import { useNavigate } from "@tanstack/react-router";
 import { api } from "../convex/_generated/api";
 import type { Id } from "../convex/_generated/dataModel";
 
-// ─── i18n ─────────────────────────────────────────────────────────────────────
 type Lang = "en" | "ne";
 
 const T = {
@@ -47,17 +48,13 @@ const T = {
     namField: "Full Name *",
     emailField: "Email *",
     phoneField: "Phone (optional)",
-    startBtn: "Get Started →",
-    alreadyAccount: "Already have an account? Use the same email.",
-    freeTrialNote: "Start free — 5 replies free",
-    onboardTitle: "Political ORM for Nepal",
-    onboardSub: "Manage your reputation instantly",
     active: "✅ Active",
     inactive: "⏸ Inactive",
     offline: "Offline payment — eSewa / Bank Transfer / Cash\nAccount activated after payment confirmation",
+    signOut: "Sign out",
   },
   ne: {
-    appName: "नेपओRM",
+    appName: "नेपORM",
     appSub: "नेपाल राजनीतिक ORM",
     tabReply: "✍️ जवाफ",
     tabMonitor: "🔍 निगरानी",
@@ -96,18 +93,13 @@ const T = {
     namField: "पूरा नाम *",
     emailField: "इमेल *",
     phoneField: "फोन (optional)",
-    startBtn: "सुरु गर्नुहोस् →",
-    alreadyAccount: "पहिले नै account छ? उही email राख्नुहोस्।",
-    freeTrialNote: "निःशुल्क सुरु गर्नुहोस् — ५ जवाफ Free",
-    onboardTitle: "नेपालको लागि राजनीतिक ORM औजार",
-    onboardSub: "तपाईंको प्रतिष्ठा तुरुन्त व्यवस्थापन गर्नुहोस्",
     active: "✅ सक्रिय",
     inactive: "⏸ निष्क्रिय",
     offline: "Offline payment — eSewa / Bank Transfer / Cash\nभुक्तानी पछि account activate गरिन्छ",
+    signOut: "साइन आउट",
   },
 };
 
-// ─── Data ─────────────────────────────────────────────────────────────────────
 const PERSON_TYPES = (lang: Lang) => [
   { value: "politician",    label: lang === "en" ? "Politician" : "नेता" },
   { value: "minister",      label: lang === "en" ? "Minister" : "मन्त्री" },
@@ -156,22 +148,16 @@ const LANGUAGES = (lang: Lang) => [
   { value: "both",    label: lang === "en" ? "Both" : "दुवै" },
 ];
 
-const LS_USER = "neporm_user";
-
 type Plan = "free" | "starter" | "pro" | "agency";
 type Tab  = "reply" | "monitor" | "profile";
 
-// ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [lang, setLang] = useState<Lang>("en");
   const [tab, setTab]   = useState<Tab>("reply");
-  const [userId, setUserId] = useState<Id<"users"> | null>(() => {
-    try { return JSON.parse(localStorage.getItem(LS_USER) ?? "null")?.userId ?? null; } catch { return null; }
-  });
-  const [showOnboard, setShowOnboard] = useState(!userId);
-
-  const storedEmail = (() => { try { return JSON.parse(localStorage.getItem(LS_USER) ?? "{}").email ?? ""; } catch { return ""; } })();
-  const userData = useQuery(api.users.getMyData, userId ? { email: storedEmail } : "skip");
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const { signOut } = useAuthActions();
+  const navigate = useNavigate();
+  const userData = useQuery(api.users.getMe);
 
   const t = T[lang];
   const planLimits: Record<Plan, string> = {
@@ -181,16 +167,26 @@ export default function App() {
     agency: lang === "en" ? "Unlimited" : "असीमित",
   };
 
-  if (showOnboard) {
-    return <OnboardScreen lang={lang} setLang={setLang} onDone={(uid, email, name) => {
-      localStorage.setItem(LS_USER, JSON.stringify({ userId: uid, email, name }));
-      setUserId(uid);
-      setShowOnboard(false);
-    }} />;
+  if (isLoading) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ color: "#e8c84a", fontSize: 14 }}>Loading...</div>
+      </div>
+    );
   }
 
+  if (!isAuthenticated) {
+    navigate({ to: "/signin" });
+    return null;
+  }
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate({ to: "/signin" });
+  };
+
   return (
-    <div style={{ minHeight: "100vh", background: "#0a0a0f", color: "#f0ede8", fontFamily: "'Noto Sans Devanagari', 'Mukta', sans-serif" }}>
+    <div style={{ minHeight: "100vh", background: "#0a0a0f", color: "#f0ede8", fontFamily: "'Noto Sans Devanagari', 'Inter', sans-serif" }}>
       <header style={{ padding: "14px 20px 0", borderBottom: "1px solid #1e1e2a" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 680, margin: "0 auto" }}>
           <div>
@@ -198,14 +194,11 @@ export default function App() {
             <div style={{ fontSize: 11, color: "#555" }}>{t.appSub}</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            {/* Language toggle */}
             <div style={{ display: "flex", background: "#111118", border: "1px solid #1e1e2a", borderRadius: 8, overflow: "hidden" }}>
               {(["en", "ne"] as Lang[]).map((l) => (
                 <button key={l} onClick={() => setLang(l)}
                   style={{ padding: "5px 10px", background: lang === l ? "#e8c84a" : "none", color: lang === l ? "#0a0a0f" : "#555", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-                >
-                  {l === "en" ? "EN" : "नेपाली"}
-                </button>
+                >{l === "en" ? "EN" : "नेपाली"}</button>
               ))}
             </div>
             {userData && (
@@ -214,10 +207,12 @@ export default function App() {
                 <div style={{ fontSize: 11, color: "#444" }}>{planLimits[userData.plan as Plan]}</div>
               </div>
             )}
+            <button onClick={handleSignOut}
+              style={{ background: "none", border: "1px solid #1e1e2a", borderRadius: 6, color: "#444", fontSize: 11, padding: "5px 10px", cursor: "pointer" }}
+            >{t.signOut}</button>
           </div>
         </div>
 
-        {/* Tabs */}
         <div style={{ display: "flex", maxWidth: 680, margin: "0 auto", marginTop: 14 }}>
           {([
             { id: "reply",   label: t.tabReply },
@@ -232,75 +227,18 @@ export default function App() {
       </header>
 
       <main style={{ maxWidth: 680, margin: "0 auto", padding: "20px 16px 80px" }}>
-        {tab === "reply"   && <ReplyTab   userId={userId!} userData={userData} lang={lang} />}
-        {tab === "monitor" && <MonitorTab userId={userId!} lang={lang} />}
-        {tab === "profile" && <ProfileTab userId={userId!} userData={userData} lang={lang} />}
+        {userData && (
+          <>
+            {tab === "reply"   && <ReplyTab   userId={userData._id} userData={userData} lang={lang} />}
+            {tab === "monitor" && <MonitorTab userId={userData._id} lang={lang} />}
+            {tab === "profile" && <ProfileTab userId={userData._id} userData={userData} lang={lang} />}
+          </>
+        )}
       </main>
     </div>
   );
 }
 
-// ─── Onboard ──────────────────────────────────────────────────────────────────
-function OnboardScreen({ lang, setLang, onDone }: { lang: Lang; setLang: (l: Lang) => void; onDone: (uid: Id<"users">, email: string, name: string) => void }) {
-  const [name, setName]   = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError]   = useState("");
-  const register = useMutation(api.users.registerUser);
-  const t = T[lang];
-
-  const submit = async () => {
-    if (!name.trim() || !email.trim()) { setError(lang === "en" ? "Name and email required." : "नाम र इमेल आवश्यक छ।"); return; }
-    setLoading(true);
-    try {
-      const res = await register({ name: name.trim(), email: email.trim().toLowerCase(), phone: phone.trim() || undefined });
-      onDone(res.userId, email.trim().toLowerCase(), name.trim());
-    } catch (e) { setError("Error: " + String(e)); }
-    finally { setLoading(false); }
-  };
-
-  return (
-    <div style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ width: "100%", maxWidth: 400 }}>
-        {/* Lang toggle at top */}
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 24 }}>
-          <div style={{ display: "flex", background: "#111118", border: "1px solid #1e1e2a", borderRadius: 8, overflow: "hidden" }}>
-            {(["en", "ne"] as Lang[]).map((l) => (
-              <button key={l} onClick={() => setLang(l)}
-                style={{ padding: "6px 14px", background: lang === l ? "#e8c84a" : "none", color: lang === l ? "#0a0a0f" : "#555", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-              >{l === "en" ? "EN" : "नेपाली"}</button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>🇳🇵</div>
-          <div style={{ fontSize: 30, fontWeight: 800, color: "#e8c84a" }}>{t.appName}</div>
-          <div style={{ fontSize: 14, color: "#666", marginTop: 8 }}>{t.onboardTitle}</div>
-          <div style={{ fontSize: 12, color: "#444", marginTop: 4 }}>{t.onboardSub}</div>
-        </div>
-
-        <div style={{ background: "#111118", border: "1px solid #1e1e2a", borderRadius: 16, padding: 24 }}>
-          <div style={{ fontSize: 13, color: "#888", marginBottom: 20, textAlign: "center" }}>{t.freeTrialNote}</div>
-          <Label>{t.namField}</Label>
-          <Input value={name} onChange={setName} placeholder={t.namePlaceholder} />
-          <Label style={{ marginTop: 14 }}>{t.emailField}</Label>
-          <Input value={email} onChange={setEmail} placeholder="email@example.com" type="email" />
-          <Label style={{ marginTop: 14 }}>{t.phoneField}</Label>
-          <Input value={phone} onChange={setPhone} placeholder="98XXXXXXXX" type="tel" />
-          {error && <div style={{ color: "#e85a4a", fontSize: 12, marginTop: 8 }}>{error}</div>}
-          <button onClick={submit} disabled={loading}
-            style={{ width: "100%", marginTop: 20, padding: "14px", background: loading ? "#333" : "#e8c84a", color: "#0a0a0f", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer" }}
-          >{loading ? "..." : t.startBtn}</button>
-          <div style={{ fontSize: 11, color: "#444", textAlign: "center", marginTop: 12 }}>{t.alreadyAccount}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Reply Tab ────────────────────────────────────────────────────────────────
 function ReplyTab({ userId, userData, lang }: { userId: Id<"users">; userData: any; lang: Lang }) {
   const t = T[lang];
   const [personType,     setPersonType]     = useState("politician");
@@ -345,14 +283,12 @@ function ReplyTab({ userId, userData, lang }: { userId: Id<"users">; userData: a
           <a href="tel:+977" style={{ display: "inline-block", marginTop: 10, background: "#e8c84a", color: "#0a0a0f", padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, textDecoration: "none" }}>{t.freeLimitBtn}</a>
         </div>
       )}
-
       <Section title={t.sectionPerson}>
         <Label>{lang === "en" ? "Name *" : "नाम *"}</Label>
         <Input value={profileName} onChange={setProfileName} placeholder={t.namePlaceholder} />
         <Label style={{ marginTop: 12 }}>{t.roleLabel}</Label>
         <Select value={personType} onChange={setPersonType} options={PERSON_TYPES(lang)} />
       </Section>
-
       <Section title={t.sectionPlatform}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
           {PLATFORMS.map((p) => (
@@ -365,13 +301,11 @@ function ReplyTab({ userId, userData, lang }: { userId: Id<"users">; userData: a
           ))}
         </div>
       </Section>
-
       <Section title={t.sectionComment}>
         <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={t.commentPlaceholder} rows={4}
           style={{ width: "100%", background: "#0a0a0f", border: "1px solid #1e1e2a", borderRadius: 10, color: "#f0ede8", padding: "12px", fontSize: 14, resize: "vertical", fontFamily: "'Noto Sans Devanagari', sans-serif", boxSizing: "border-box" }}
         />
       </Section>
-
       <Section title={t.sectionSettings}>
         <Label>{t.situationLabel}</Label>
         <Select value={situationType} onChange={setSituationType} options={SITUATION_TYPES(lang)} />
@@ -386,19 +320,15 @@ function ReplyTab({ userId, userData, lang }: { userId: Id<"users">; userData: a
           ))}
         </div>
       </Section>
-
       <button onClick={handleGenerate} disabled={!canGenerate || !!isPlanLimited}
         style={{ width: "100%", padding: "15px", background: canGenerate && !isPlanLimited ? "#e8c84a" : "#1a1a1a", color: canGenerate && !isPlanLimited ? "#0a0a0f" : "#444", border: "none", borderRadius: 12, fontSize: 16, fontWeight: 700, cursor: canGenerate && !isPlanLimited ? "pointer" : "not-allowed", transition: "all 0.15s" }}
       >{loading ? t.generatingBtn : t.generateBtn}</button>
-
       {error && <div style={{ background: "#1a0808", border: "1px solid #e85a4a33", borderRadius: 10, padding: 14, marginTop: 16, color: "#e85a4a", fontSize: 13 }}>{error}</div>}
-
       {loading && (
         <div style={{ marginTop: 24 }}>
           {[0,1,2].map((i) => <div key={i} style={{ background: "#111118", borderRadius: 12, height: 80, marginBottom: 12, opacity: 1 - i * 0.2, animation: "pulse 1.5s ease-in-out infinite" }} />)}
         </div>
       )}
-
       {replies.length > 0 && (
         <div style={{ marginTop: 24 }}>
           <div style={{ fontSize: 12, color: "#555", marginBottom: 12, textAlign: "center" }}>
@@ -425,7 +355,6 @@ function ReplyTab({ userId, userData, lang }: { userId: Id<"users">; userData: a
   );
 }
 
-// ─── Monitor Tab ──────────────────────────────────────────────────────────────
 function MonitorTab({ userId, lang }: { userId: Id<"users">; lang: Lang }) {
   const t = T[lang];
   const [query,    setQuery]    = useState("");
@@ -466,10 +395,8 @@ function MonitorTab({ userId, lang }: { userId: Id<"users">; lang: Lang }) {
           >{loading ? "..." : t.searchBtn}</button>
         </div>
       </div>
-
       {loading && <div style={{ textAlign: "center", color: "#555", padding: "40px 0", fontSize: 13 }}>{lang === "en" ? "Searching..." : "खोज्दैछ..."}</div>}
       {!loading && searched && results.length === 0 && <div style={{ textAlign: "center", color: "#444", padding: "40px 0", fontSize: 13 }}>{t.noResults}</div>}
-
       {!loading && results.length > 0 && (
         <div style={{ fontSize: 12, color: "#555", marginBottom: 12 }}>
           {results.length} {lang === "en" ? "results found" : "नतिजा भेटियो"} · {lang === "en" ? "sorted by newest" : "नयाँ पहिले"}
@@ -490,9 +417,7 @@ function MonitorTab({ userId, lang }: { userId: Id<"users">; lang: Lang }) {
           if (mins < 60) return `${mins}m ago`;
           const hrs = Math.floor(mins / 60);
           if (hrs < 24) return `${hrs}h ago`;
-          const days = Math.floor(hrs / 24);
-          if (days < 30) return `${days}d ago`;
-          return new Date(dateStr).toLocaleDateString();
+          return `${Math.floor(hrs / 24)}d ago`;
         };
         return (
           <div key={i} style={{ background: "#111118", border: "1px solid #1e1e2a", borderRadius: 12, padding: 14, marginBottom: 10 }}>
@@ -512,7 +437,6 @@ function MonitorTab({ userId, lang }: { userId: Id<"users">; lang: Lang }) {
           </div>
         );
       })}
-
       {!loading && !searched && (
         <div style={{ textAlign: "center", padding: "60px 20px" }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
@@ -523,7 +447,6 @@ function MonitorTab({ userId, lang }: { userId: Id<"users">; lang: Lang }) {
   );
 }
 
-// ─── Profile Tab ──────────────────────────────────────────────────────────────
 function ProfileTab({ userId, userData, lang }: { userId: Id<"users">; userData: any; lang: Lang }) {
   const t = T[lang];
   const planColors: Record<Plan, string> = { free: "#555", starter: "#4a8", pro: "#e8c84a", agency: "#a78bfa" };
@@ -541,10 +464,10 @@ function ProfileTab({ userId, userData, lang }: { userId: Id<"users">; userData:
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             {[
-              { label: t.planLabel,     value: <span style={{ color: planColors[userData.plan as Plan], textTransform: "uppercase", fontWeight: 700 }}>{userData.plan}</span> },
-              { label: t.statusLabel,   value: userData.isActive ? <span style={{ color: "#4a8" }}>{t.active}</span> : <span style={{ color: "#e85a4a" }}>{t.inactive}</span> },
-              { label: t.totalReplies,  value: userData.repliesUsed },
-              { label: t.thisMonth,     value: userData.repliesThisMonth },
+              { label: t.planLabel,    value: <span style={{ color: planColors[userData.plan as Plan], textTransform: "uppercase", fontWeight: 700 }}>{userData.plan}</span> },
+              { label: t.statusLabel,  value: userData.isActive ? <span style={{ color: "#4a8" }}>{t.active}</span> : <span style={{ color: "#e85a4a" }}>{t.inactive}</span> },
+              { label: t.totalReplies, value: userData.repliesUsed },
+              { label: t.thisMonth,    value: userData.repliesThisMonth },
             ].map((item, i) => (
               <div key={i} style={{ background: "#0a0a0f", borderRadius: 10, padding: 12 }}>
                 <div style={{ fontSize: 11, color: "#444", marginBottom: 4 }}>{item.label}</div>
@@ -554,7 +477,6 @@ function ProfileTab({ userId, userData, lang }: { userId: Id<"users">; userData:
           </div>
         </div>
       )}
-
       {userData?.plan === "free" && (
         <div style={{ background: "#0d0d08", border: "1px solid #e8c84a33", borderRadius: 16, padding: 20, marginBottom: 20 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: "#e8c84a", marginBottom: 8 }}>{t.upgradeTitle}</div>
@@ -563,12 +485,11 @@ function ProfileTab({ userId, userData, lang }: { userId: Id<"users">; userData:
           <ContactForm lang={lang} />
         </div>
       )}
-
       <div style={{ background: "#111118", border: "1px solid #1e1e2a", borderRadius: 14, overflow: "hidden" }}>
         {[
-          { plan: "Starter", price: "NPR 500/mo", features: lang === "en" ? "30 replies/month · Facebook + YouTube" : "३० जवाफ/महिना · Facebook + YouTube", color: "#4a8" },
-          { plan: "Pro",     price: "NPR 2,000/mo", features: lang === "en" ? "Unlimited · All platforms · Monitor" : "असीमित · सबै platforms · Monitor", color: "#e8c84a", highlight: true },
-          { plan: "Agency",  price: "NPR 8,000/mo", features: lang === "en" ? "10 profiles · Team · White-label" : "१० profiles · Team · White-label", color: "#a78bfa" },
+          { plan: "Starter", price: "NPR 500/mo",   features: lang === "en" ? "30 replies/month · Facebook + YouTube" : "३० जवाफ/महिना", color: "#4a8" },
+          { plan: "Pro",     price: "NPR 2,000/mo", features: lang === "en" ? "Unlimited · All platforms · Monitor" : "असीमित · सबै platforms", color: "#e8c84a", highlight: true },
+          { plan: "Agency",  price: "NPR 8,000/mo", features: lang === "en" ? "10 profiles · Team · White-label" : "१० profiles · Team", color: "#a78bfa" },
         ].map((tier, i) => (
           <div key={i} style={{ padding: "14px 16px", borderBottom: i < 2 ? "1px solid #1a1a2a" : "none", background: tier.highlight ? "#0d0d06" : "transparent" }}>
             <div style={{ display: "flex", justifyContent: "space-between" }}>
@@ -586,7 +507,6 @@ function ProfileTab({ userId, userData, lang }: { userId: Id<"users">; userData:
   );
 }
 
-// ─── Contact Form ─────────────────────────────────────────────────────────────
 function ContactForm({ lang }: { lang: Lang }) {
   const t = T[lang];
   const [name,  setName]  = useState("");
@@ -622,7 +542,6 @@ function ContactForm({ lang }: { lang: Lang }) {
   );
 }
 
-// ─── Shared ───────────────────────────────────────────────────────────────────
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ background: "#111118", border: "1px solid #1e1e2a", borderRadius: 14, padding: 16, marginBottom: 14 }}>
@@ -653,4 +572,3 @@ function Select({ value, onChange, options }: { value: string; onChange: (v: str
     </select>
   );
 }
-

@@ -1,8 +1,10 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { authTables } from "@convex-dev/auth/server";
 
 export default defineSchema({
-  // One row per registered user
+  ...authTables,
+
   users: defineTable({
     email: v.string(),
     name: v.string(),
@@ -13,19 +15,17 @@ export default defineSchema({
       v.literal("pro"),
       v.literal("agency")
     ),
-    repliesUsed: v.number(),          // lifetime count
-    repliesThisMonth: v.number(),     // resets monthly
-    monthYear: v.string(),            // "2025-06" — for monthly reset
-    isActive: v.boolean(),            // admin toggles after offline payment
-    activatedBy: v.optional(v.string()), // admin note
+    repliesUsed: v.number(),
+    repliesThisMonth: v.number(),
+    monthYear: v.string(),
+    isActive: v.boolean(),
+    activatedBy: v.optional(v.string()),
     createdAt: v.number(),
-  })
-    .index("by_email", ["email"]),
+  }).index("by_email", ["email"]),
 
-  // Each user can have 1 profile (Pro: up to 3, Agency: unlimited)
   profiles: defineTable({
     userId: v.id("users"),
-    name: v.string(),                 // "Ramesh Kumar Shrestha"
+    name: v.string(),
     personType: v.union(
       v.literal("politician"),
       v.literal("minister"),
@@ -38,14 +38,12 @@ export default defineSchema({
       v.literal("ngo_leader"),
       v.literal("public_figure")
     ),
-    party: v.optional(v.string()),    // "Nepali Congress", "CPN-UML", etc.
+    party: v.optional(v.string()),
     constituency: v.optional(v.string()),
-    brandVoice: v.optional(v.string()), // saved tone/style notes
+    brandVoice: v.optional(v.string()),
     createdAt: v.number(),
-  })
-    .index("by_user", ["userId"]),
+  }).index("by_user", ["userId"]),
 
-  // Every generated reply set is logged
   replies: defineTable({
     userId: v.id("users"),
     profileId: v.optional(v.id("profiles")),
@@ -84,7 +82,6 @@ export default defineSchema({
     .index("by_user", ["userId"])
     .index("by_timestamp", ["timestamp"]),
 
-  // Monitor search results cache
   monitorResults: defineTable({
     userId: v.id("users"),
     searchQuery: v.string(),
@@ -100,10 +97,8 @@ export default defineSchema({
       })
     ),
     fetchedAt: v.number(),
-  })
-    .index("by_user", ["userId"]),
+  }).index("by_user", ["userId"]),
 
-  // Admin settings — singleton
   settings: defineTable({
     aiProvider: v.union(
       v.literal("groq"),
@@ -112,11 +107,10 @@ export default defineSchema({
       v.literal("openai")
     ),
     maintenanceMode: v.boolean(),
-    freeReplyLimit: v.number(),       // default: 5
-    starterMonthlyLimit: v.number(),  // default: 30
+    freeReplyLimit: v.number(),
+    starterMonthlyLimit: v.number(),
   }),
 
-  // Contact requests from website (offline payment interest)
   contactRequests: defineTable({
     name: v.string(),
     phone: v.string(),
@@ -129,6 +123,5 @@ export default defineSchema({
       v.literal("activated")
     ),
     createdAt: v.number(),
-  })
-    .index("by_status", ["status"]),
+  }).index("by_status", ["status"]),
 });
