@@ -10,7 +10,56 @@ const resultShape = v.object({
   sentiment: v.union(v.literal("positive"), v.literal("negative"), v.literal("neutral")),
   platform: v.string(),
   publishedAt: v.optional(v.string()),
+  credibility: v.optional(v.string()),
 });
+
+// ── Credibility classifier ─────────────────────────────────────────────────
+function classifyCredibility(source: string): string {
+  const s = source.toLowerCase();
+  const major = ["setopati", "ratopati", "onlinekhabar", "ekantipur", "kathmandupost", "republica", "myrepublica", "himalayan", "nagarik", "annapurna"];
+  const international = ["bbc", "reuters", "apnews", "aljazeera", "wsj", "nytimes", "guardian", "ndtv", "indiatimes", "hindustantimes"];
+  if (major.some((m) => s.includes(m))) return "nepal_major";
+  if (international.some((m) => s.includes(m))) return "international";
+  // Any source with "nepal" in name is minor Nepal media
+  if (s.includes("nepal") || s.includes("np")) return "nepal_minor";
+  return "unknown";
+}
+
+// ── Relevance check — does the title actually mention the search query? ─────
+function isRelevant(title: string, query: string): boolean {
+  const titleLower = title.toLowerCase();
+  // Split query into meaningful words (3+ chars)
+  const words = query.toLowerCase().split(/\s+/).filter((w) => w.length >= 3);
+  if (words.length === 0) return true;
+  // At least one query word must appear in the title
+  return words.some((w) => titleLower.includes(w));
+}
+
+// ── Clean RSS description — strip HTML, URLs, source suffixes ──────────────
+function cleanSnippet(raw: string): string {
+  // Remove HTML tags
+  let clean = raw.replace(/<[^>]*>/g, " ");
+  // Remove URLs
+  clean = clean.replace(/https?:\/\/\S+/g, "");
+  // Remove encoded entities
+  clean = clean.replace(/&[a-z]+;/gi, " ");
+  // Collapse whitespace
+  clean = clean.replace(/\s+/g, " ").trim();
+  // If what's left is very short or looks like junk, return empty
+  if (clean.length < 20) return "";
+  return clean;
+}
+
+// ── Parse pubDate to ISO string ────────────────────────────────────────────
+function parseDate(dateStr: string): string | undefined {
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return undefined;
+    return d.toISOString();
+  } catch {
+    return undefined;
+  }
+}
 
 export const searchMentions = action({
   args: {
@@ -31,15 +80,66 @@ export const searchMentions = action({
       sentiment: "positive" | "negative" | "neutral";
       platform: string;
       publishedAt?: string;
+      credibility?: string;
     }> = [];
 
-    const searchQuery = `${args.query} Nepal`;
+    // ── RSS parser helper ────────────────────────────────────────────────
+    const parseRSS = (xml: string, maxItems: number) => {
+      const itemRegex    = /<item>([\s\S]*?)<\/item>/g;
+      const titleRegex   = /<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(?!<!\[CDATA\[)(.*?)<\/title>/s;
+      const linkRegex    = /<link>(.*?)<\/link>/s;
+      const descRegex    = /<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>|<description>([\s\S]*?)<\/description>/;
+      const pubDateRegex = /<pubDate>(.*?)<\/pubDate>/;
+      const sourceRegex  = /<source[^>]*>(.*?)<\/source>/;
 
-    // ── 1. Google News RSS ─────────────────────────────────────────────────
+      const parsed: typeof results = [];
+      let match;
+
+      while ((match = itemRegex.exec(xml)) !== null && parsed.length < maxItems) {
+        const item = match[1];
+
+        const titleMatch = titleRegex.exec(item);
+        const linkMatch  = linkRegex.exec(item);
+        const descMatch  = descRegex.exec(item);
+        const dateMatch  = pubDateRegex.exec(item);
+        const srcMatch   = sourceRegex.exec(item);
+
+        const rawTitle = (titleMatch?.[1] ?? titleMatch?.[2] ?? "").trim();
+        const url      = (linkMatch?.[1] ?? "").trim();
+        const rawDesc  = (descMatch?.[1]  ?? descMatch?.[2]  ?? "").trim();
+        const pubDate  = (dateMatch?.[1]  ?? "").trim();
+        const source   = (srcMatch?.[1]   ?? "Google News").trim();
+
+        // Strip " - Source Name" suffix that Google News appends to titles
+        const title = rawTitle.replace(/\s[-–]\s[^-–]+$/, "").trim();
+
+        if (!title || !url) continue;
+
+        // ── Relevance gate — skip if title doesn't mention the query ──
+        if (!isRelevant(title, args.query)) continue;
+
+        const snippet = cleanSnippet(rawDesc) || "";
+
+        parsed.push({
+          title,
+          source,
+          url,
+          snippet,
+          sentiment: detectSentiment(title + " " + snippet),
+          platform: "news",
+          publishedAt: parseDate(pubDate),
+          credibility: classifyCredibility(source),
+        });
+      }
+
+      return parsed;
+    };
+
+    // ── 1. Google News RSS — Nepal-specific ───────────────────────────────
     try {
-      const encoded = encodeURIComponent(searchQuery);
-      const rssUrl = `https://news.google.com/rss/search?q=${encoded}&hl=en-NP&gl=NP&ceid=NP:en`;
-      
+      const encoded = encodeURIComponent(`${args.query} Nepal`);
+      const rssUrl  = `https://news.google.com/rss/search?q=${encoded}&hl=en-NP&gl=NP&ceid=NP:en`;
+
       const res = await fetch(rssUrl, {
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; NepORM/1.0)",
@@ -48,141 +148,31 @@ export const searchMentions = action({
       });
 
       if (res.ok) {
-        const xml = await res.text();
-        
-        // Parse RSS items with regex
-        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-        const titleRegex = /<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/;
-        const linkRegex = /<link>(.*?)<\/link>/;
-        const descRegex = /<description><!\[CDATA\[(.*?)\]\]><\/description>|<description>(.*?)<\/description>/;
-        const pubDateRegex = /<pubDate>(.*?)<\/pubDate>/;
-        const sourceRegex = /<source[^>]*>(.*?)<\/source>/;
-
-        let match;
-        let count = 0;
-        while ((match = itemRegex.exec(xml)) !== null && count < 12) {
-          const item = match[1];
-          
-          const titleMatch = titleRegex.exec(item);
-          const linkMatch  = linkRegex.exec(item);
-          const descMatch  = descRegex.exec(item);
-          const dateMatch  = pubDateRegex.exec(item);
-          const srcMatch   = sourceRegex.exec(item);
-
-          const title   = (titleMatch?.[1] || titleMatch?.[2] || "").trim();
-          const url     = (linkMatch?.[1] || "").trim();
-          const desc    = (descMatch?.[1]  || descMatch?.[2]  || "").trim();
-          const pubDate = (dateMatch?.[1]  || "").trim();
-          const source  = (srcMatch?.[1]   || "Google News").trim();
-
-          // Strip HTML tags from description
-          const cleanDesc = desc.replace(/<[^>]*>/g, "").trim();
-          const snippet   = cleanDesc.slice(0, 200) || title;
-
-          if (title && url) {
-            results.push({
-              title,
-              source,
-              url,
-              snippet,
-              sentiment: detectSentiment(title + " " + snippet),
-              platform: "news",
-              publishedAt: pubDate || undefined,
-            });
-            count++;
-          }
-        }
+        const xml   = await res.text();
+        const items = parseRSS(xml, 12);
+        results.push(...items);
       }
     } catch {
-      // Google News failed — continue to Bing
+      // continue to fallback
     }
 
-    // ── 2. Bing News Search API (if key is set) ────────────────────────────
-    const bingKey = process.env.BING_NEWS_API_KEY;
-    if (bingKey && results.length < 8) {
-      try {
-        const encoded = encodeURIComponent(searchQuery);
-        const bingUrl = `https://api.bing.microsoft.com/v7.0/news/search?q=${encoded}&mkt=en-NP&count=10&freshness=Month`;
-        
-        const res = await fetch(bingUrl, {
-          headers: {
-            "Ocp-Apim-Subscription-Key": bingKey,
-          },
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          const articles = data.value ?? [];
-          
-          for (const art of articles.slice(0, 8)) {
-            // Avoid duplicates
-            const isDupe = results.some((r) => r.title === art.name);
-            if (isDupe) continue;
-
-            results.push({
-              title: art.name ?? "No title",
-              source: art.provider?.[0]?.name ?? "Bing News",
-              url: art.url ?? "",
-              snippet: art.description ?? art.name ?? "",
-              sentiment: detectSentiment((art.name ?? "") + " " + (art.description ?? "")),
-              platform: "news",
-              publishedAt: art.datePublished ?? undefined,
-            });
-          }
-        }
-      } catch {
-        // Bing failed — continue
-      }
-    }
-
-    // ── 3. Google News RSS fallback — broader search ───────────────────────
-    // If still no results, try without "Nepal" suffix
-    if (results.length === 0) {
+    // ── 2. Fallback — search exact name without "Nepal" suffix ────────────
+    if (results.length < 5) {
       try {
         const encoded = encodeURIComponent(args.query);
-        const rssUrl = `https://news.google.com/rss/search?q=${encoded}&hl=en&gl=US&ceid=US:en`;
-        
+        const rssUrl  = `https://news.google.com/rss/search?q=${encoded}&hl=en-NP&gl=NP&ceid=NP:en`;
+
         const res = await fetch(rssUrl, {
           headers: { "User-Agent": "Mozilla/5.0 (compatible; NepORM/1.0)" },
         });
 
         if (res.ok) {
-          const xml = await res.text();
-          const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-          const titleRegex = /<title><!\[CDATA\[(.*?)\]\]><\/title>|<title>(.*?)<\/title>/;
-          const linkRegex  = /<link>(.*?)<\/link>/;
-          const descRegex  = /<description><!\[CDATA\[(.*?)\]\]><\/description>|<description>(.*?)<\/description>/;
-          const pubDateRegex = /<pubDate>(.*?)<\/pubDate>/;
-          const sourceRegex  = /<source[^>]*>(.*?)<\/source>/;
-
-          let match;
-          let count = 0;
-          while ((match = itemRegex.exec(xml)) !== null && count < 8) {
-            const item      = match[1];
-            const titleMatch = titleRegex.exec(item);
-            const linkMatch  = linkRegex.exec(item);
-            const descMatch  = descRegex.exec(item);
-            const dateMatch  = pubDateRegex.exec(item);
-            const srcMatch   = sourceRegex.exec(item);
-
-            const title   = (titleMatch?.[1] || titleMatch?.[2] || "").trim();
-            const url     = (linkMatch?.[1] || "").trim();
-            const desc    = (descMatch?.[1] || descMatch?.[2] || "").trim();
-            const pubDate = (dateMatch?.[1] || "").trim();
-            const source  = (srcMatch?.[1]  || "Google News").trim();
-            const cleanDesc = desc.replace(/<[^>]*>/g, "").trim();
-
-            if (title && url) {
-              results.push({
-                title,
-                source,
-                url,
-                snippet: cleanDesc.slice(0, 200) || title,
-                sentiment: detectSentiment(title + " " + cleanDesc),
-                platform: "news",
-                publishedAt: pubDate || undefined,
-              });
-              count++;
+          const xml   = await res.text();
+          const items = parseRSS(xml, 8);
+          // Deduplicate by URL
+          for (const item of items) {
+            if (!results.some((r) => r.url === item.url)) {
+              results.push(item);
             }
           }
         }
@@ -191,10 +181,12 @@ export const searchMentions = action({
       }
     }
 
-    // Sort: negative first (most urgent for ORM), then neutral, then positive
+    // ── Sort by newest first ───────────────────────────────────────────────
     results.sort((a, b) => {
-      const order = { negative: 0, neutral: 1, positive: 2 };
-      return order[a.sentiment] - order[b.sentiment];
+      if (!a.publishedAt && !b.publishedAt) return 0;
+      if (!a.publishedAt) return 1;
+      if (!b.publishedAt) return -1;
+      return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
     });
 
     return {
@@ -213,7 +205,7 @@ function detectSentiment(text: string): "positive" | "negative" | "neutral" {
     "bribe", "bribery", "crime", "criminal", "accused", "protest", "criticism",
     "dismiss", "fired", "removed", "sacked", "defeated", "abuse", "murder",
     "crisis", "danger", "problem", "opposition", "controversial", "allegation",
-    "accused", "investigation", "probe", "impeach", "sued", "lawsuit", "arrest",
+    "investigation", "probe", "impeach", "sued", "lawsuit", "arrest",
     "bhrastachar", "birodh", "dosh", "kasur", "galti", "jhuto", "nindaa",
   ];
 
